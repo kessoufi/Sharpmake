@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+using System;
 using System.Collections.Generic;
 
 namespace Sharpmake.Generators.FastBuild
@@ -43,13 +44,13 @@ namespace Sharpmake.Generators.FastBuild
         /// Gets a configuration name for that platform in the .bff file for the code files that
         /// are written in native C code.
         /// </summary>
-        string CConfigName { get; }
+        string CConfigName(Configuration conf);
 
         /// <summary>
         /// Gets a configuration name for that platform in the .bff file for the code files that
         /// are written in native C++ code.
         /// </summary>
-        string CppConfigName { get; }
+        string CppConfigName(Configuration conf);
 
         /// <summary>
         /// Gets whether a library prefix (usually `lib`) is required on that platform when
@@ -63,30 +64,31 @@ namespace Sharpmake.Generators.FastBuild
         /// Setups extra linker settings for linking with that platform.
         /// </summary>
         /// <param name="fileGenerator">A <see cref="IFileGenerator"/> for writing the file.</param>
-        /// <param name="outputType">The build output.</param>
+        /// <param name="configuration">The project configuration</param>
         /// <param name="fastBuildOutputFile">The file name of the build output.</param>
+        void SetupExtraLinkerSettings(IFileGenerator fileGenerator, Project.Configuration configuration, string fastBuildOutputFile);
+
+        [Obsolete("Use " + nameof(SetupExtraLinkerSettings) + " and pass the conf")]
         void SetupExtraLinkerSettings(IFileGenerator fileGenerator, Project.Configuration.OutputType outputType, string fastBuildOutputFile);
 
-        CompilerSettings GetMasterCompilerSettings(
-               IDictionary<string, CompilerSettings> masterCompilerSettings,
-               string compilerName,
-               string rootPath,
-               DevEnv devEnv,
-               string projectRootPath,
-               bool useCCompiler);
+        /// <summary>
+        /// Get the extra list of build steps to execute for this platform.
+        /// </summary>
+        /// <param name="configuration">The project configuration</param>
+        /// <param name="fastBuildOutputFile">The file name of the build output.</param>
+        /// <returns>The list of post build step to execute.</returns>
+        IEnumerable<Project.Configuration.BuildStepBase> GetExtraPostBuildEvents(Project.Configuration configuration, string fastBuildOutputFile);
+
+        /// <summary>
+        /// Get the linker output name for this platform.
+        /// </summary>
+        /// <param name="outputType">The project output type</param>
+        /// <param name="fastBuildOutputFile">The original file name of the build output.</param>
+        /// <returns>The final file name of the build output.</returns>
+        string GetOutputFilename(Project.Configuration.OutputType outputType, string fastBuildOutputFile);
 
         void AddCompilerSettings(
             IDictionary<string, CompilerSettings> masterCompilerSettings,
-            string compilerName,
-            string rootPath,
-            DevEnv devEnv,
-            string projectRootPath);
-
-        void SetConfiguration(
-            IDictionary<string, CompilerSettings.Configuration> configurations,
-            string compilerName,
-            string projectRootPath,
-            DevEnv devEnv,
-            bool useCCompiler);
+            Project.Configuration conf);
     }
 }

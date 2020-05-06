@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 using System.Collections.Generic;
+using System.Linq;
 using Sharpmake.Generators;
 
 namespace Sharpmake
@@ -23,8 +24,13 @@ namespace Sharpmake
             #region IWindowsFastBuildCompilerSettings implementation
             public override bool IsPcPlatform => true;
             public IDictionary<DevEnv, string> BinPath { get; set; } = new Dictionary<DevEnv, string>();
+            public IDictionary<IFastBuildCompilerKey, CompilerFamily> CompilerFamily { get; set; } = new Dictionary<IFastBuildCompilerKey, CompilerFamily>();
             public IDictionary<DevEnv, string> LinkerPath { get; set; } = new Dictionary<DevEnv, string>();
+            public IDictionary<DevEnv, string> LinkerExe { get; set; } = new Dictionary<DevEnv, string>();
+            public IDictionary<DevEnv, string> LibrarianExe { get; set; } = new Dictionary<DevEnv, string>();
             public IDictionary<DevEnv, string> ResCompiler { get; set; } = new Dictionary<DevEnv, string>();
+            public IDictionary<DevEnv, string> ResxCompiler { get; set; } = new Dictionary<DevEnv, string>();
+            public IDictionary<DevEnv, Strings> ExtraFiles { get; set; } = new Dictionary<DevEnv, Strings>();
             #endregion
 
             #region IPlatformVcxproj implementation
@@ -56,16 +62,6 @@ namespace Sharpmake
             }
             public override bool HasUserAccountControlSupport => true;
 
-            public override IEnumerable<string> GetPlatformLibraryPaths(IGenerationContext context)
-            {
-                var dirs = new List<string>(base.GetPlatformLibraryPaths(context));
-                var dotnet = Util.IsDotNet(context.Configuration) ? context.Configuration.Target.GetFragment<DotNetFramework>() : default(DotNetFramework?);
-                string platformDirsStr = context.DevelopmentEnvironment.GetWindowsLibraryPath(context.Configuration.Platform, dotnet);
-                dirs.AddRange(EnumerateSemiColonSeparatedString(platformDirsStr));
-
-                return dirs;
-            }
-
             public override IEnumerable<string> GetPlatformLibraryFiles(IGenerationContext context)
             {
                 yield return "kernel32.lib";
@@ -84,17 +80,41 @@ namespace Sharpmake
 
             public override void SetupSdkOptions(IGenerationContext context)
             {
-                var options = context.Options;
                 var conf = context.Configuration;
                 var devEnv = context.DevelopmentEnvironment;
 
-                bool clrSupport = Util.IsDotNet(conf);
-                if (devEnv >= DevEnv.vs2012 && devEnv.OverridenWindowsPath())
+                // vs2012 and vs2013 do not support overriding windows kits using the underlying variables
+                // so we need to change the VC++ directories path.
+                // We need to override the executable path for vs2015 because WindowsKit UAP.props does not
+                // correctly set the WindowsSDK_ExecutablePath to the bin folder of its current version.
+                if ((devEnv == DevEnv.vs2012 || devEnv == DevEnv.vs2013 || devEnv == DevEnv.vs2015) && !KitsRootPaths.UsesDefaultKitRoot(devEnv))
                 {
+                    var options = context.Options;
                     options["ExecutablePath"] = devEnv.GetWindowsExecutablePath(conf.Platform);
-                    options["IncludePath"] = devEnv.GetWindowsIncludePath();
-                    options["LibraryPath"] = devEnv.GetWindowsLibraryPath(conf.Platform, clrSupport ? conf.Target.GetFragment<DotNetFramework>() : default(DotNetFramework?));
-                    options["ExcludePath"] = devEnv.GetWindowsIncludePath();
+                    if (devEnv != DevEnv.vs2015)
+                    {
+                        options["IncludePath"] = devEnv.GetWindowsIncludePath();
+                        options["LibraryPath"] = devEnv.GetWindowsLibraryPath(conf.Platform, Util.IsDotNet(conf) ? conf.Target.GetFragment<DotNetFramework>() : default(DotNetFramework?));
+                        options["ExcludePath"] = devEnv.GetWindowsIncludePath();
+                    }
+                }
+
+                if (Options.GetObject<Options.Vc.General.PlatformToolset>(conf).IsLLVMToolchain())
+                {
+                    context.Options["ExecutablePath"] = ClangForWindows.GetWindowsClangExecutablePath() + ";" + devEnv.GetWindowsExecutablePath(conf.Platform);
+                    if (Options.GetObject<Options.Vc.LLVM.UseClangCl>(conf) == Options.Vc.LLVM.UseClangCl.Enable)
+                    {
+                        context.Options["IncludePath"] = ClangForWindows.GetWindowsClangIncludePath() + ";" + devEnv.GetWindowsIncludePath();
+                        context.Options["LibraryPath"] = ClangForWindows.GetWindowsClangLibraryPath() + ";" + devEnv.GetWindowsLibraryPath(conf.Platform, Util.IsDotNet(conf) ? conf.Target.GetFragment<DotNetFramework>() : default(DotNetFramework?));
+                    }
+                }
+
+                OrderableStrings SystemIncludes = new OrderableStrings(conf.DependenciesIncludeSystemPaths);
+                SystemIncludes.AddRange(conf.IncludeSystemPaths);
+                if (SystemIncludes.Count > 0)
+                {
+                    SystemIncludes.Sort();
+                    context.Options["IncludePath"] += ";" + SystemIncludes.JoinStrings(";");
                 }
             }
             #endregion

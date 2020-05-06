@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Ubisoft Entertainment
+// Copyright (c) 2017 Ubisoft Entertainment
 // 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ namespace Sharpmake
     }
 
 
-    public class FastBuildSettings
+    public static class FastBuildSettings
     {
         public const string FastBuildConfigFileExtension = ".bff";
         public const string MasterBffFileName = "fbuild";
@@ -84,28 +84,41 @@ namespace Sharpmake
         public static bool FastBuildNoStopOnError = false;
         public static bool FastBuildMonitor = false;
         public static bool FastBuildFastCancel = false;
+        public static bool FastBuildUseIDE = true;
+        public static bool FastBuildNoUnity = false;
+
+        /// <summary>
+        /// Allows retention of build state across BFF changes. Requires v0.97
+        /// </summary>
+        public static bool FastBuildAllowDBMigration = false;
+
+        // Limit of distributed workers. In FastBuild code the default is 15
+        public static int FastBuildWorkerConnectionLimit = -1;
 
         // Configuration Files Generation Settings
 
         /// <summary>
         /// Include the IDE version in master bff filename
         /// </summary>
+        [Obsolete("MasterBff is now named after the solution")]
         public static bool IncludeCompilerInMasterBFFFilename = true;
 
         /// <summary>
         /// Separate the Master bff content per platform
         /// </summary>
+        [Obsolete("MasterBff contains what its solution contains")]
         public static bool SeparateMasterBFFPerPlatform = false;
 
         /// <summary>
         /// The path of the master BFF is the folder relative to the source tree root.
-        /// ex: "\projects" for scimitar AC source trees.
+        /// ex: "projects"
         /// </summary>
+        [Obsolete("MasterBff is now in the same folder as the solution")]
         public static string FastBuildMasterBFFPath = null; // PLEASE OVERRIDE this in your Sharpmake main
 
         /// <summary>
         /// The path to the executable used to start a fastbuild compilation. This path is relative to the source tree root.
-        /// ex: @"\tools\FastBuild\start-fbuild.bat" for scimitar AC source trees.
+        /// ex: @"tools\FastBuild\start-fbuild.bat"
         /// </summary>
         public static string FastBuildMakeCommand = null; // PLEASE OVERRIDE this in your Sharpmake main
 
@@ -154,7 +167,7 @@ namespace Sharpmake
         /// <remarks>
         /// VS 2012 sometimes generates corrupted code when preprocessing an already preprocessed file when it encounters
         /// enum definitions.
-        /// Exemple:
+        /// Example:
         ///enum dateorder
         ///{
         ///    no_order, dmy, mdy, ymd, ydm

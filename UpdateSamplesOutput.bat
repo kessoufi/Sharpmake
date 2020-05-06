@@ -1,22 +1,43 @@
 @echo off
 
+:: First compile sharpmake to insure we are trying to deploy using an executable corresponding to the code.
+call CompileSharpmake.bat Sharpmake.sln Debug "Any CPU"
+if %errorlevel% NEQ 0 goto error
+
 :: main
 set ERRORLEVEL_BACKUP=0
 
-call :UpdateRef samples ConfigureOrder    main.sharpmake.cs              reference ConfigureOrder
+:: samples
+call :UpdateRef samples ConfigureOrder              main.sharpmake.cs                          reference         ConfigureOrder
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-call :UpdateRef samples CPPCLI            CLRTest.sharpmake.cs           reference CPPCLI
+call :UpdateRef samples CPPCLI                      CLRTest.sharpmake.cs                       reference         CPPCLI
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-call :UpdateRef samples CSharpHelloWorld  HelloWorld.sharpmake.cs        reference CSharpHelloWorld
+call :UpdateRef samples CSharpHelloWorld            HelloWorld.sharpmake.cs                    reference         CSharpHelloWorld
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-call :UpdateRef samples HelloWorld        HelloWorld.sharpmake.cs        reference HelloWorld
+call :UpdateRef samples HelloWorld                  HelloWorld.sharpmake.cs                    reference         HelloWorld
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-call :UpdateRef samples CSharpVsix        CSharpVsix.sharpmake.cs        reference CSharpVsix
+call :UpdateRef samples CSharpVsix                  CSharpVsix.sharpmake.cs                    reference         CSharpVsix
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-call :UpdateRef samples PackageReferences PackageReferences.sharpmake.cs reference PackageReferences
+call :UpdateRef samples CSharpWCF                   CSharpWCF.sharpmake.cs                     reference         CSharpWCF\codebase
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
-:: that one is special, the root is the current folder
-call :UpdateRef samples SharpmakeGen      SharpmakeGen.sharpmake.cs      reference %~dp0
+call :UpdateRef samples CSharpImports               CSharpImports.sharpmake.cs                 reference         CSharpImports
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+call :UpdateRef samples PackageReferences           PackageReferences.sharpmake.cs             reference         PackageReferences
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+call :UpdateRef samples QTFileCustomBuild           QTFileCustomBuild.sharpmake.cs             reference         QTFileCustomBuild
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+call :UpdateRef samples FastBuildSimpleExecutable   FastBuildSimpleExecutable.sharpmake.cs     reference         FastBuildSimpleExecutable
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+call :UpdateRef samples SimpleExeLibDependency      SimpleExeLibDependency.sharpmake.cs        reference         SimpleExeLibDependency
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+
+call :UpdateRef samples NetCore\DotNetCoreFrameworkHelloWorld    HelloWorld.sharpmake.cs       reference         NetCore\DotNetCoreFrameworkHelloWorld
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+call :UpdateRef samples NetCore\DotNetFrameworkHelloWorld    HelloWorld.sharpmake.cs       reference         NetCore\DotNetFrameworkHelloWorld
+if not "%ERRORLEVEL_BACKUP%" == "0" goto error
+
+:: functional tests
+call :UpdateRef Sharpmake.FunctionalTests FastBuildFunctionalTest FastBuildFunctionalTest.sharpmake.cs reference FastBuildFunctionalTest
 if not "%ERRORLEVEL_BACKUP%" == "0" goto error
 
 @COLOR 2F
@@ -36,9 +57,9 @@ pushd %CD%
 :: set testScopedCurrentDirectory as current
 cd /d %~dp0%~1
 
-set SHARPMAKE_EXECUTABLE=%~2\bin\Debug\Sharpmake.Application.exe
-if not exist %SHARPMAKE_EXECUTABLE% set SHARPMAKE_EXECUTABLE=%~2\bin\Release\Sharpmake.Application.exe
-if not exist %SHARPMAKE_EXECUTABLE% echo Cannot find sharpmake executable in %~dp0%~1\%~2 & pause & goto error 
+set SHARPMAKE_EXECUTABLE=%~dp0bin\Debug\Sharpmake.Application.exe
+if not exist %SHARPMAKE_EXECUTABLE% set SHARPMAKE_EXECUTABLE=%~dp0bin\Release\Sharpmake.Application.exe
+if not exist %SHARPMAKE_EXECUTABLE% echo Cannot find sharpmake executable in %~dp0bin & pause & goto error
 
 echo Using executable %SHARPMAKE_EXECUTABLE%
 

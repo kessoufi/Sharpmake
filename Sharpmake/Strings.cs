@@ -419,6 +419,37 @@ namespace Sharpmake
             _list.Sort();
         }
 
+        private int StableSortCompare(StringEntry e1, StringEntry e2)
+        {
+            if (e1.OrderNumber != e2.OrderNumber)
+            {
+                if (e1.OrderNumber < e2.OrderNumber)
+                    return -1;
+                else
+                    return 1;
+            }
+            return 0;
+        }
+
+        public void StableSort()
+        {
+            if (_list.Any(entry => entry.OrderNumber != 0))
+            {
+                int count = _list.Count;
+                for (int j = 1; j < count; j++)
+                {
+                    StringEntry key = _list[j];
+
+                    int i = j - 1;
+                    for (; i >= 0 && StableSortCompare(_list[i], key) > 0; i--)
+                    {
+                        _list[i + 1] = _list[i];
+                    }
+                    _list[i + 1] = key;
+                }
+            }
+        }
+
         public bool Contains(string value)
         {
             return _hashSet.Contains(value);
@@ -514,6 +545,11 @@ namespace Sharpmake
                     _list[index] = new StringEntry(value, orderNumber);
                 }
             }
+        }
+
+        public int GetOrderNumber(int index)
+        {
+            return _list[index].OrderNumber;
         }
 
         // When doing a for loop to change all values, like resolving them, it's

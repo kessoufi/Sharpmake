@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.Build.Utilities;
 
 namespace Sharpmake
@@ -27,6 +27,7 @@ namespace Sharpmake
         /// <summary>
         /// Extra user directory to load assembly from using statement detection
         /// </summary>
+        [Obsolete("AssemblyDirectory is not used anymore")]
         public List<string> AssemblyDirectory { get { return _assemblyDirectory; } }
 
         /// <summary>
@@ -37,17 +38,61 @@ namespace Sharpmake
         /// <summary>
         /// Extra user assembly file name to use while compiling
         /// </summary>
-        public List<string> References { get { return _references; } }
+        public IReadOnlyList<string> References { get { return _references; } }
+
+        private readonly HashSet<string> _defines;
+
+        /// <summary>
+        /// Source attribute parser to use to add configuration based on source code
+        /// </summary>
+        public List<ISourceAttributeParser> AttributeParsers { get { return _attributeParsers; } }
+
+        /// <summary>
+        /// Parsing flow parsers to use to add configuration based on source code
+        /// </summary>
+        public List<IParsingFlowParser> ParsingFlowParsers { get { return _parsingFlowParsers; } }
+
+        public bool UseDefaultParsers = true;
 
         public bool UseDefaultReferences = true;
 
         public static readonly string[] DefaultReferences = { "System.dll", "System.Core.dll" };
 
+        private class AssemblyInfo : IAssemblyInfo
+        {
+            public string Id { get; set; }
+            public string DebugProjectName { get; set; }
+            public Assembly Assembly { get; set; }
+            public IReadOnlyCollection<string> SourceFiles => _sourceFiles;
+            public IReadOnlyCollection<string> References => _references;
+            public IReadOnlyDictionary<string, IAssemblyInfo> SourceReferences => _sourceReferences;
+            public bool UseDefaultReferences { get; set; }
+
+            public List<string> _sourceFiles = new List<string>();
+            public List<string> _references = new List<string>();
+            public Dictionary<string, IAssemblyInfo> _sourceReferences = new Dictionary<string, IAssemblyInfo>();
+        }
+
+        public Assembler()
+            : this(new HashSet<string>())
+        {
+        }
+
+        public Assembler(HashSet<string> defines)
+        {
+            _defines = defines;
+        }
+
         public Assembly BuildAssembly(params string[] sourceFiles)
         {
-            // Alway compile to a physic dll to be able to debug
-            string tmpFile = GetTmpAssemblyFile();
-            return Build(tmpFile, sourceFiles);
+            return BuildAssembly(null, sourceFiles).Assembly;
+        }
+
+        public IAssemblyInfo BuildAssembly(IBuilderContext context, params string[] sourceFiles)
+        {
+            // Always compile to a physic dll to be able to debug
+            string tmpFile = GetNextTmpAssemblyFilePath();
+            return Build(context, tmpFile, sourceFiles);
         }
 
         public static TDelegate BuildDelegate<TDelegate>(string sourceFilePath, string fullFunctionName, Assembly[] assemblies)
@@ -190,10 +235,10 @@ namespace Sharpmake
             }
 
             // build in memory
-            Assembly assembly = assembler.Build(null, sourceTmpFile);
+            Assembly assembly = assembler.Build(null, null, sourceTmpFile).Assembly;
             InternalError.Valid(assembly != null);
 
-            // Try to delete tmp file to prevent polution, but usefull while debugging
+            // Try to delete tmp file to prevent pollution, but useful while debugging
             //if (!System.Diagnostics.Debugger.IsAttached)
             Util.TryDeleteFile(sourceTmpFile);
 
@@ -223,13 +268,21 @@ namespace Sharpmake
             return result;
         }
 
+        #region Internal
+
+        internal delegate void OutputDelegate(string message, params object[] args);
+        internal static event OutputDelegate EventOutputError;
+        internal static event OutputDelegate EventOutputWarning;
+
+        #endregion
+
         #region Private
 
         private List<string> _assemblyDirectory = new List<string>();
         private List<Assembly> _assemblies = new List<Assembly>();
-        public List<string> _references = new List<string>();
-        private static Regex s_includeRegex = new Regex(@"^\s*\[module:\s*Sharpmake.Include([^\""])*\""((?<INCLUDE>([^\""]*)+))", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.CultureInvariant);
-        private static Regex s_referenceRegex = new Regex(@"^\s*\[module:\s*Sharpmake.Reference([^\""])*\""((?<REFERENCE>([^\""]*)+))", RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        private List<string> _references = new List<string>();
+        private List<ISourceAttributeParser> _attributeParsers = new List<ISourceAttributeParser>();
+        private List<IParsingFlowParser> _parsingFlowParsers = new List<IParsingFlowParser>();
 
         private static bool IsDelegate(Type delegateType)
         {
@@ -246,9 +299,85 @@ namespace Sharpmake
             return delegateType.GetMethod("Invoke");
         }
 
-        private Assembly Build(string libraryFile, params string[] sources)
+        private class AssemblerContext : IAssemblerContext
         {
-            List<string> sourceFiles = GetSourceFiles(sources);
+            private readonly Assembler _assembler;
+            private readonly AssemblyInfo _assemblyInfo;
+            public IReadOnlyList<string> SourceFiles => _assemblyInfo.SourceFiles.ToList();
+            private Strings _visiting;
+            public readonly List<IParsingFlowParser> AllParsingFlowParsers;
+            public readonly List<ISourceAttributeParser> AllParsers;
+            public List<ISourceAttributeParser> ImportedParsers = new List<ISourceAttributeParser>();
+            private readonly IBuilderContext _builderContext;
+
+            public AssemblerContext(Assembler assembler, AssemblyInfo assemblyInfo, IBuilderContext builderContext, string[] sources)
+            {
+                _assembler = assembler;
+                _assemblyInfo = assemblyInfo;
+                _builderContext = builderContext;
+                AllParsers = assembler.ComputeParsers();
+                AllParsingFlowParsers = assembler.ComputeParsingFlowParsers();
+                _assemblyInfo._sourceFiles.AddRange(sources);
+                _visiting = new Strings(new FileSystemStringComparer(), sources);
+            }
+
+            public void AddSourceFile(string file)
+            {
+                if (!_visiting.Contains(file))
+                {
+                    _assemblyInfo._sourceFiles.Add(file);
+                    _visiting.Add(file);
+                }
+            }
+
+            public void AddReference(string file)
+            {
+                if (!_assemblyInfo._references.Contains(file))
+                {
+                    _assemblyInfo._references.Add(file);
+                    var loadInfo = _builderContext.LoadExtension(file);
+                    this.AddSourceAttributeParsers(loadInfo.Parsers);
+                }
+            }
+
+            public void AddReference(IAssemblyInfo info)
+            {
+                if (info.Assembly == null)
+                {
+                    _assemblyInfo._sourceReferences.Add(info.Id, info);
+                }
+                else if (!_assemblyInfo._references.Contains(info.Id))
+                {
+                    _assemblyInfo._references.Add(info.Assembly.Location);
+                    _assemblyInfo._sourceReferences.Add(info.Id, info);
+                }
+            }
+
+            public void AddSourceAttributeParser(ISourceAttributeParser parser)
+            {
+                AllParsers.Add(parser);
+                ImportedParsers.Add(parser);
+            }
+
+            public IAssemblyInfo BuildAndLoadSharpmakeFiles(params string[] files)
+            {
+                if (_builderContext == null)
+                    throw new NotSupportedException("BuildAndLoadSharpmakeFiles is not supported on builds without a IBuilderContext");
+
+                var loadInfo = _builderContext.BuildAndLoadSharpmakeFiles(AllParsers, AllParsingFlowParsers, files);
+                this.AddSourceAttributeParsers(loadInfo.Parsers);
+                return loadInfo.AssemblyInfo;
+            }
+
+            public void SetDebugProjectName(string name)
+            {
+                _assemblyInfo.DebugProjectName = name;
+            }
+        }
+
+        private IAssemblyInfo Build(IBuilderContext builderContext, string libraryFile, params string[] sources)
+        {
+            var assemblyInfo = LoadAssemblyInfo(builderContext, sources);
 
             HashSet<string> references = new HashSet<string>();
 
@@ -278,7 +407,7 @@ namespace Sharpmake
             // Generate an library
             cp.GenerateExecutable = false;
 
-            // Set the level at which the compiler  
+            // Set the level at which the compiler
             // should start displaying warnings.
             cp.WarningLevel = 4;
 
@@ -288,6 +417,12 @@ namespace Sharpmake
             // Set compiler argument to optimize output.
             // TODO : figure out why it does not work when uncommenting the following line
             // cp.CompilerOptions = "/optimize";
+
+            // If any defines are specified, pass them to the CSC.
+            if (_defines.Any())
+            {
+                cp.CompilerOptions = "-DEFINE:" + string.Join(",", _defines);
+            }
 
             // Specify the assembly file name to generate
             if (libraryFile == null)
@@ -307,152 +442,294 @@ namespace Sharpmake
             // C# will give compilation errors if a LIB variable contains non-existing directories.
             Environment.SetEnvironmentVariable("LIB", null);
 
-            // Invoke compilation of the source file.
-            CompilerResults cr = provider.CompileAssemblyFromFile(cp, sourceFiles.ToArray());
+            // Configure Temp file collection to avoid deleting its temp file. We will delete them ourselves after the compilation
+            // For some reasons, this seems to add just enough delays to avoid the following first chance exception(probably caused by some handles in csc.exe)
+            // System.IO.IOException: 'The process cannot access the file 'C:\Users\xxx\AppData\Local\Temp\sa205152\sa205152.out' because it is being used by another process.'            
+            // That exception wasn't causing real problems but was really annoying when debugging!
+            // Executed several times sharpmake and this first chance exception no longer occurs when KeepFiles is true.
+            cp.TempFiles.KeepFiles = true;
 
-            if (cr.Errors.HasErrors)
+            // Invoke compilation of the source file.
+            CompilerResults cr = provider.CompileAssemblyFromFile(cp, assemblyInfo.SourceFiles.ToArray());
+
+            // Manually delete the files in the temp files collection.
+            cp.TempFiles.Delete();
+
+            if (cr.Errors.HasErrors || cr.Errors.HasWarnings)
             {
                 string errorMessage = "";
                 foreach (CompilerError ce in cr.Errors)
+                {
+                    if (ce.IsWarning)
+                        EventOutputWarning?.Invoke("{0}" + Environment.NewLine, ce.ToString());
+                    else
+                        EventOutputError?.Invoke("{0}" + Environment.NewLine, ce.ToString());
+
                     errorMessage += ce + Environment.NewLine;
-                throw new Error(errorMessage);
+                }
+
+                if (cr.Errors.HasErrors)
+                {
+                    if (builderContext == null || builderContext.CompileErrorBehavior == BuilderCompileErrorBehavior.ThrowException)
+                        throw new Error(errorMessage);
+                    return assemblyInfo;
+                }
             }
 
-            return cr.CompiledAssembly;
+            assemblyInfo.Assembly = cr.CompiledAssembly;
+            assemblyInfo.Id = assemblyInfo.Assembly.Location;
+            return assemblyInfo;
         }
 
-        internal List<string> GetSourceFiles(string[] sources)
+        private List<ISourceAttributeParser> ComputeParsers()
         {
-            List<string> sourceFiles = new List<string>(sources);
+            var parsers = AttributeParsers.ToList();
+            if (UseDefaultParsers)
+                AddDefaultParsers(parsers);
+            return parsers;
+        }
 
-            // Get all using namespace from sourceFiles
-            for (int i = 0; i < sourceFiles.Count; ++i)
+        private List<IParsingFlowParser> ComputeParsingFlowParsers()
+        {
+            List<IParsingFlowParser> parsers = ParsingFlowParsers.ToList();
+            if (UseDefaultParsers)
+                AddDefaultParsingFlowParsers(parsers);
+            return parsers;
+        }
+
+        private AssemblyInfo LoadAssemblyInfo(IBuilderContext builderContext, string[] sources)
+        {
+            var assemblyInfo = new AssemblyInfo()
             {
-                string sourceFile = sourceFiles[i];
-                if (File.Exists(sourceFile))
+                Id = string.Join(";", sources),
+                UseDefaultReferences = UseDefaultReferences
+            };
+
+            var context = new AssemblerContext(this, assemblyInfo, builderContext, sources);
+            AnalyseSourceFiles(context);
+
+            _references.AddRange(assemblyInfo.References);
+
+            return assemblyInfo;
+        }
+
+        internal IAssemblyInfo LoadUncompiledAssemblyInfo(IBuilderContext context, string[] sources)
+        {
+            return LoadAssemblyInfo(context, sources);
+        }
+
+        internal List<string> GetSourceFiles(IBuilderContext builderContext, string[] sources)
+        {
+            var assemblyInfo = new AssemblyInfo()
+            {
+                Id = string.Join(";", sources),
+                UseDefaultReferences = UseDefaultReferences
+            };
+
+            var context = new AssemblerContext(this, assemblyInfo, builderContext, sources);
+            AnalyseSourceFiles(context);
+            return assemblyInfo.SourceFiles.ToList();
+        }
+
+        private void AddDefaultParsers(ICollection<ISourceAttributeParser> parsers)
+        {
+            parsers.Add(new IncludeAttributeParser());
+            parsers.Add(new ReferenceAttributeParser());
+            parsers.Add(new PackageAttributeParser());
+        }
+
+        private void AddDefaultParsingFlowParsers(ICollection<IParsingFlowParser> parsers)
+        {
+            parsers.Add(new PreprocessorConditionParser(_defines));
+        }
+
+        private void AnalyseSourceFiles(AssemblerContext context)
+        {
+            var newParsers = Enumerable.Empty<ISourceAttributeParser>();
+            var allParsers = context.AllParsers.ToList(); // Copy, as it may be modified when parsing other files
+            int partiallyParsedCount = 0;
+
+            do
+            {
+                // Get all using namespace from sourceFiles
+                for (int i = 0; i < context.SourceFiles.Count; ++i)
                 {
-                    List<string> includes = new List<string>();
-
-                    AnalyseSourceFile(sourceFile, includes);
-
-                    foreach (string include in includes)
+                    string sourceFile = context.SourceFiles[i];
+                    if (File.Exists(sourceFile))
                     {
-                        if (!sourceFiles.Contains(include))
-                            sourceFiles.Add(include);
+                        AnalyseSourceFile(sourceFile, (i < partiallyParsedCount) ? newParsers : allParsers, context.AllParsingFlowParsers, context);
+                    }
+                    else
+                    {
+                        throw new Error("source file not found: " + sourceFile);
                     }
                 }
-                else
-                {
-                    throw new Error("source file not found: " + sourceFile);
-                }
-            }
-
-            return sourceFiles;
+                // Get parsers discovered while parsing these files
+                // We need to reparse all files currently in the list (partiallyParsedCount) again with the new parsers only,
+                // and all files discovered after this with all the parsers.
+                newParsers = context.ImportedParsers;
+                context.ImportedParsers = new List<ISourceAttributeParser>();
+                allParsers.AddRange(newParsers);
+                partiallyParsedCount = context.SourceFiles.Count;
+            } while (newParsers.Any());
         }
 
-        private void AnalyseSourceFile(string sourceFile, List<string> includes)
+        internal void ParseSourceAttributesFromLine(
+            string line,
+            FileInfo sourceFilePath,
+            int lineNumber,
+            IAssemblerContext context
+        )
+        {
+            ParseSourceAttributesFromLine(line, sourceFilePath, lineNumber, ComputeParsers(), context);
+        }
+
+        internal void ParseSourceAttributesFromLine(
+            string line,
+            FileInfo sourceFilePath,
+            int lineNumber,
+            IEnumerable<ISourceAttributeParser> parsers,
+            IAssemblerContext context
+        )
+        {
+            foreach (var parser in parsers)
+            {
+                parser.ParseLine(line, sourceFilePath, lineNumber, context);
+            }
+        }
+
+        private void AnalyseSourceFile(string sourceFile, IEnumerable<ISourceAttributeParser> parsers, IEnumerable<IParsingFlowParser> flowParsers, IAssemblerContext context)
         {
             using (StreamReader reader = new StreamReader(sourceFile))
             {
                 FileInfo sourceFilePath = new FileInfo(sourceFile);
+                List<IParsingFlowParser> flowParsersList = flowParsers.ToList();
+
+                foreach (IParsingFlowParser parsingFlowParser in flowParsersList)
+                {
+                    parsingFlowParser.FileParsingBegin(sourceFile);
+                }
 
                 int lineNumber = 0;
-                string line = reader.ReadLine();
+                string line = reader.ReadLine()?.TrimStart();
                 while (line != null)
                 {
                     ++lineNumber;
 
-                    Match match = s_includeRegex.Match(line);
-                    for (; match.Success; match = match.NextMatch())
+                    // First, update the parsing flow with the current line
+                    foreach (IParsingFlowParser parsingFlowParser in flowParsersList)
                     {
-                        string includeFilename = match.Groups["INCLUDE"].ToString();
-                        string resolvedIncludeFilename = "";
-
-                        if (!Path.IsPathRooted(includeFilename))
-                            resolvedIncludeFilename = Util.PathGetAbsolute(sourceFilePath.DirectoryName, includeFilename);
-
-                        if (!File.Exists(resolvedIncludeFilename))
-                            resolvedIncludeFilename = Util.GetCapitalizedPath(resolvedIncludeFilename);
-                        if (!File.Exists(resolvedIncludeFilename))
-                            throw new Error("\t" + sourceFilePath.FullName + "(" + lineNumber + "): error: Sharpmake.Include file not found {0}", includeFilename);
-
-                        includes.Add(resolvedIncludeFilename);
+                        parsingFlowParser.ParseLine(line, sourceFilePath, lineNumber, context);
                     }
 
-                    match = s_referenceRegex.Match(line);
-                    for (; match.Success; match = match.NextMatch())
+                    // We only want to parse the lines inside valid blocks
+                    if (!flowParsersList.Any() || flowParsersList.All(p => p.ShouldParseLine()))
                     {
-                        string referenceRelativePath = match.Groups["REFERENCE"].ToString();
-                        string referencePath = "";
-
-                        if (!Path.IsPathRooted(referenceRelativePath))
-                            referencePath = Util.PathGetAbsolute(sourceFilePath.DirectoryName, referenceRelativePath);
-
-                        if (!File.Exists(referencePath))
-                        {
-                            referencePath = Util.PathGetAbsolute(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), referenceRelativePath);
-                            if (!File.Exists(referencePath))
-                            {
-                                // try using .net framework locations
-                                referencePath = GetAssemblyDllPath(referenceRelativePath);
-
-                                if (referencePath == null)
-                                    throw new Error("\t" + sourceFilePath.FullName + "(" + lineNumber + "): error: Sharpmake.Reference file not found: {0}", referenceRelativePath);
-                            }
-                        }
-
-                        _references.Add(referencePath);
+                        ParseSourceAttributesFromLine(line, sourceFilePath, lineNumber, parsers, context);
                     }
-                    line = reader.ReadLine();
+
+                    line = reader.ReadLine()?.TrimStart();
+
+                    if (!string.IsNullOrEmpty(line) && line.StartsWith("namespace", StringComparison.Ordinal))
+                        break;
+                }
+
+                foreach (IParsingFlowParser parsingFlowParser in flowParsersList)
+                {
+                    parsingFlowParser.FileParsingEnd(sourceFile);
                 }
             }
         }
 
-        private static string GetAssemblyDllPath(string fileName)
+        public static IEnumerable<string> EnumeratePathToDotNetFramework()
         {
             for (int i = (int)TargetDotNetFrameworkVersion.VersionLatest; i >= 0; --i)
             {
-                string frameworkDirectory = null;
-#if !__MonoCS__
-                try
-                {
-                    frameworkDirectory = ToolLocationHelper.GetPathToDotNetFrameworkReferenceAssemblies((TargetDotNetFrameworkVersion)i);
-                }
-                catch (ArgumentException)
-#endif // if !__MonoCS__
-                {
-                    frameworkDirectory = ToolLocationHelper.GetPathToDotNetFramework((TargetDotNetFrameworkVersion)i);
-                }
+                string frameworkDirectory = ToolLocationHelper.GetPathToDotNetFramework((TargetDotNetFrameworkVersion)i);
                 if (frameworkDirectory != null)
-                {
-                    string result = Path.Combine(frameworkDirectory, fileName);
-                    if (File.Exists(result))
-                        return result;
-                }
+                    yield return frameworkDirectory;
+            }
+        }
+
+        public static string GetAssemblyDllPath(string fileName)
+        {
+            foreach (string frameworkDirectory in EnumeratePathToDotNetFramework())
+            {
+                string result = Path.Combine(frameworkDirectory, fileName);
+                if (File.Exists(result))
+                    return result;
             }
             return null;
         }
 
-        private static int s_nextTempFile = 0;
+        /// <summary>
+        /// Static constructor called at executable init time
+        /// </summary>
+        static Assembler()
+        {
+            CleanupTmpAssemblies();
+        }
 
-        [System.Diagnostics.DebuggerNonUserCode]
-        private string GetTmpAssemblyFile()
+        /// <summary>
+        /// This method is intended to be called at executable init time. 
+        /// It let us avoid exceptions when executing sharpmake several times in loops(exception can occur in the cs compiler
+        /// when it tries to create pdb files and some already exists. Maybe that previous sharpmake sometimes still has some handles to the file?).
+        /// With this cleanup code active there is no exception anymore on my PC. Previously I had the exception almost 100% on the second or third iteration
+        /// of a stability test(executing sharpmake in loop to insure it always generate the same thing).
+        /// </summary>
+        /// <remarks>
+        /// Was previously having the following exception when running stability tests(on subsequents sharpmake execution runs):
+        /// Unexpected error creating debug information file 'c:\Users\xxxx\AppData\Local\Temp\Sharpmake.Assembler_1.tmp.PDB' -- 'c:\Users\xxxx\AppData\Local\Temp\Sharpmake.Assembler_1.tmp.pdb: The process cannot access the file because it is being used by another process.
+        /// </remarks>
+        private static void CleanupTmpAssemblies()
+        {
+            // Erase any remaining file that has the prefix that will be used for temporary assemblies(dll, pdb, etc...)
+            // This avoids exceptions occurring when executing sharpmake several times in loops(for example when running stability tests)
+            string[] oldTmpFiles = Directory.GetFiles(GetTmpAssemblyBasePath(), GetTmpAssemblyFilePrefix() + "*.*", SearchOption.TopDirectoryOnly);
+            foreach (string f in oldTmpFiles)
+            {
+                Util.TryDeleteFile(f);
+            }
+        }
+
+        /// <summary>
+        /// Get the base path of temporary assembly files.
+        /// </summary>
+        /// <returns>the base path</returns>
+        private static string GetTmpAssemblyBasePath()
+        {
+            return Path.GetTempPath();
+        }
+
+        /// <summary>
+        /// Get the assembly files common prefixes for all temporary assemblies generated in this process.
+        /// </summary>
+        /// <returns>the prefix</returns>
+        private static string GetTmpAssemblyFilePrefix()
+        {
+            // Now taking into account the working directory when setting the temporary assembly prefix.
+            // That is useful to be able to run several sharpmake concurrently with /sharpmakemutexsuffix otherwise they can cause harm to each others.
+
+            // Note: Util.BuildGuid is converting the argument to a MD5.
+            string md5WorkingDir = Util.BuildGuid(Environment.CurrentDirectory).ToString().ToLower();
+            return $"Sharpmake_Assembly_{md5WorkingDir}_";
+        }
+
+        private static int s_nextTempFile = 0; // Index of last assembly temporary file
+
+        /// <summary>
+        /// Get the next temporary assembly file path.
+        /// </summary>
+        /// <returns>path of next temporary assembly</returns>
+        private string GetNextTmpAssemblyFilePath()
         {
             // try to re use the same file name to not pollute tmp directory
-            string tmpFilePrefix = GetType().FullName + "_";
+            string tmpFileBasePath = GetTmpAssemblyBasePath();
             string tmpFileSuffix = ".tmp.dll";
 
-            while (s_nextTempFile < int.MaxValue)
-            {
-                int currentTempFile = s_nextTempFile;
-                ++s_nextTempFile;
-                string tmpFile = Path.Combine(Path.GetTempPath(), tmpFilePrefix + currentTempFile + tmpFileSuffix);
-                if (!File.Exists(tmpFile) || Util.TryDeleteFile(tmpFile))
-                {
-                    return tmpFile;
-                }
-            }
-            return null;
+            int currentTempFile = Interlocked.Increment(ref s_nextTempFile);
+            string tmpFile = Path.Combine(GetTmpAssemblyBasePath(), GetTmpAssemblyFilePrefix() + currentTempFile + tmpFileSuffix);
+            return tmpFile;
         }
 
         #endregion

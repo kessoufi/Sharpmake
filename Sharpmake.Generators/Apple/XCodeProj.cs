@@ -22,7 +22,7 @@ using System.Text;
 
 namespace Sharpmake.Generators.Apple
 {
-    public partial class XCodeProj
+    public partial class XCodeProj : IProjectGenerator
     {
         private Builder _builder;
         public const string ProjectExtension = ".xcodeproj";
@@ -163,7 +163,7 @@ namespace Sharpmake.Generators.Apple
             }
 
             // Write the scheme file
-            var defaultTarget = _nativeTargets.Values.Where(target => target.OutputFile.OutputType != Project.Configuration.OutputType.IosTestBundle).First();
+            var defaultTarget = _nativeTargets.Values.Where(target => target.OutputFile.OutputType != Project.Configuration.OutputType.IosTestBundle).FirstOrDefault();
             using (fileGenerator.Declare("projectFile", projectFile))
             using (fileGenerator.Declare("item", defaultTarget))
             using (fileGenerator.Declare("testableElements", testableElements))
@@ -248,39 +248,38 @@ namespace Sharpmake.Generators.Apple
                 {
                     foreach (Project.Configuration dependentConfiguration in conf.ResolvedDependencies)
                     {
-                        ProjectReference projectReference = new ProjectReference(dependentConfiguration.ProjectFullFileNameWithExtension);
-                        _projectItems.Add(projectReference);
-                        if (!_projectsFolder.Children.Contains(projectReference))
-                            _projectsFolder.Children.Add(projectReference);
-
-                        ProjectOutputFile outputFileProxy = new ProjectOutputFile(dependentConfiguration);
-                        ProjectNativeTarget nativeTargetProxy = new ProjectNativeTarget(dependentConfiguration.TargetFileFullName);
-                        ProjectContainerProxy projectProxy = new ProjectContainerProxy(projectReference, nativeTargetProxy, ProjectContainerProxy.Type.Target);
-                        _projectItems.Add(projectProxy);
-
-                        ProjectTargetDependency targetDependency = new ProjectTargetDependency(projectReference, projectProxy);
-                        _projectItems.Add(targetDependency);
-                        _targetDependencies[conf].Add(targetDependency);
-
-                        projectProxy = new ProjectContainerProxy(projectReference, outputFileProxy, ProjectContainerProxy.Type.Archive);
-                        _projectItems.Add(projectProxy);
-
-                        ProjectReferenceProxy referenceProxy = new ProjectReferenceProxy(projectReference, projectProxy, outputFileProxy);
-                        _projectItems.Add(referenceProxy);
-
-                        ProjectProductsFolder projectDependencyGroup = new ProjectProductsFolder(projectReference.Name);
-
-                        if (!_projectReferencesGroups.ContainsKey(projectDependencyGroup))
+                        if (dependentConfiguration.Output != Project.Configuration.OutputType.None)
                         {
-                            projectDependencyGroup.Children.Add(referenceProxy);
-                            _projectReferencesGroups.Add(projectDependencyGroup, projectReference);
+                            ProjectReference projectReference = new ProjectReference(dependentConfiguration.ProjectFullFileNameWithExtension);
+                            _projectItems.Add(projectReference);
+                            if (!_projectsFolder.Children.Contains(projectReference))
+                                _projectsFolder.Children.Add(projectReference);
+
+                            ProjectOutputFile outputFileProxy = new ProjectOutputFile(dependentConfiguration);
+                            ProjectNativeTarget nativeTargetProxy = new ProjectNativeTarget(dependentConfiguration.TargetFileFullName);
+                            ProjectContainerProxy projectProxy = new ProjectContainerProxy(projectReference, nativeTargetProxy, ProjectContainerProxy.Type.Target);
+                            _projectItems.Add(projectProxy);
+
+                            ProjectTargetDependency targetDependency = new ProjectTargetDependency(projectReference, projectProxy);
+                            _projectItems.Add(targetDependency);
+                            _targetDependencies[conf].Add(targetDependency);
+
+                            projectProxy = new ProjectContainerProxy(projectReference, outputFileProxy, ProjectContainerProxy.Type.Archive);
+                            _projectItems.Add(projectProxy);
+
+                            ProjectReferenceProxy referenceProxy = new ProjectReferenceProxy(projectReference, projectProxy, outputFileProxy);
+                            _projectItems.Add(referenceProxy);
+
+                            ProjectProductsFolder projectDependencyGroup = new ProjectProductsFolder(projectReference.Name);
+
+                            if (!_projectReferencesGroups.ContainsKey(projectDependencyGroup))
+                            {
+                                projectDependencyGroup.Children.Add(referenceProxy);
+                                _projectReferencesGroups.Add(projectDependencyGroup, projectReference);
+                            }
+
+                            _projectItems.Add(projectDependencyGroup);
                         }
-
-                        _projectItems.Add(projectDependencyGroup);
-
-                        ProjectBuildFile libraryBuildFile = new ProjectBuildFile(referenceProxy);
-                        _projectItems.Add(libraryBuildFile);
-                        _frameworksBuildPhases[conf].Files.Add(libraryBuildFile);
                     }
                 }
 
@@ -313,7 +312,8 @@ namespace Sharpmake.Generators.Apple
                 {
                     ProjectDeveloperFrameworkFile testFrameworkItem = new ProjectDeveloperFrameworkFile(_unitTestFramework);
                     ProjectBuildFile buildFileItem = new ProjectBuildFile(testFrameworkItem);
-                    _frameworksFolder.Children.Add(testFrameworkItem);
+                    if (_frameworksFolder != null)
+                        _frameworksFolder.Children.Add(testFrameworkItem);
                     _projectItems.Add(testFrameworkItem);
                     _projectItems.Add(buildFileItem);
                     _frameworksBuildPhases[conf].Files.Add(buildFileItem);
@@ -331,7 +331,6 @@ namespace Sharpmake.Generators.Apple
                 foreach (Project.Configuration targetConf in configsList[conf])
                 {
                     XCodeOptions options = _optionMapping[targetConf];
-
                     ProjectBuildConfigurationForTarget configurationForNativeTarget;
                     if (targetConf.Output == Project.Configuration.OutputType.IosTestBundle)
                         configurationForNativeTarget = new ProjectBuildConfigurationForUnitTestTarget(targetConf, target, options);
@@ -351,7 +350,7 @@ namespace Sharpmake.Generators.Apple
                 {
                     Project.Configuration bundleLoadingAppConfiguration = FindBundleLoadingApp(configurations);
 
-                    if (_nativeTargets.ContainsKey(bundleLoadingAppConfiguration))
+                    if (bundleLoadingAppConfiguration != null && _nativeTargets.ContainsKey(bundleLoadingAppConfiguration))
                     {
                         ProjectNativeTarget bundleLoadingAppTarget = _nativeTargets[bundleLoadingAppConfiguration];
 
@@ -392,8 +391,9 @@ namespace Sharpmake.Generators.Apple
 
             bool iCloudSupport = (_optionMapping[configurations[0]]["iCloud"] == "1");
             string developmentTeam = _optionMapping[configurations[0]]["DevelopmentTeam"];
+            string provisioningStyle = _optionMapping[configurations[0]]["ProvisioningStyle"];
             List<ProjectNativeTarget> nativeTargets = new List<ProjectNativeTarget>(_nativeTargets.Values);
-            _projectMain = new ProjectMain(project.Name, _mainGroup, configurationListForProject, nativeTargets, iCloudSupport, developmentTeam);
+            _projectMain = new ProjectMain(project.Name, _mainGroup, configurationListForProject, nativeTargets, iCloudSupport, developmentTeam, provisioningStyle);
 
             configurationListForProject.RelatedItem = _projectMain;
             foreach (KeyValuePair<ProjectFolder, ProjectReference> referenceGroup in _projectReferencesGroups)
@@ -607,7 +607,7 @@ namespace Sharpmake.Generators.Apple
             // Search in existing roots.
             foreach (ProjectFileSystemItem item in _projectItems.Where(item => item is ProjectFileSystemItem))
             {
-                if (fullPath.StartsWith(item.FullPath))
+                if (fullPath.StartsWith(item.FullPath, StringComparison.OrdinalIgnoreCase))
                 {
                     if (fullPath.Length > item.FullPath.Length)
                         return AddInFileSystem(item, fullPath.Substring(item.FullPath.Length + 1), applyWorkspaceOnlyToRoot ? null : workspacePath);
@@ -666,7 +666,7 @@ namespace Sharpmake.Generators.Apple
                     }
                 }
             }
-            parent.Children.Sort((f1, f2) => f1.Name.CompareTo(f2.Name));
+            parent.Children.Sort((f1, f2) => string.Compare(f1.Name, f2.Name, StringComparison.OrdinalIgnoreCase));
             return parent;
         }
 
@@ -709,6 +709,7 @@ namespace Sharpmake.Generators.Apple
             options["Archs"] = "\"$(ARCHS_STANDARD_32_64_BIT)\"";
             options["CodeSignEntitlements"] = RemoveLineTag;
             options["DevelopmentTeam"] = RemoveLineTag;
+            options["ProvisioningStyle"] = "Automatic";
             options["InfoPListFile"] = RemoveLineTag;
             options["IPhoneOSDeploymentTarget"] = RemoveLineTag;
             options["MacOSDeploymentTarget"] = RemoveLineTag;
@@ -716,7 +717,7 @@ namespace Sharpmake.Generators.Apple
             options["RemoveLibraryPaths"] = "";
             options["RemoveSpecificDeviceLibraryPaths"] = "";
             options["RemoveSpecificSimulatorLibraryPaths"] = "";
-            options["SDKRoot"] = "iphoneos";
+            options["SDKRoot"] = conf.Platform == Platform.ios ? "iphoneos" : RemoveLineTag;
             options["SpecificLibraryPaths"] = RemoveLineTag;
             options["TargetedDeviceFamily"] = "1,2";
             options["UsePrecompiledHeader"] = "NO";
@@ -751,6 +752,8 @@ namespace Sharpmake.Generators.Apple
             else
                 options["CodeSigningIdentity"] = RemoveLineTag;
 
+            options["ProductBundleIdentifier"] = Options.StringOption.Get<Options.XCode.Compiler.ProductBundleIdentifier>(conf);
+
             Options.SelectOption(conf,
                 Options.Option(Options.XCode.Compiler.CppLanguageStandard.CPP98, () => options["CppStandard"] = "c++98"),
                 Options.Option(Options.XCode.Compiler.CppLanguageStandard.CPP11, () => options["CppStandard"] = "c++11"),
@@ -760,10 +763,13 @@ namespace Sharpmake.Generators.Apple
                 Options.Option(Options.XCode.Compiler.CppLanguageStandard.GNU14, () => options["CppStandard"] = "gnu++14")
                 );
 
-
             Options.XCode.Compiler.DevelopmentTeam developmentTeam = Options.GetObject<Options.XCode.Compiler.DevelopmentTeam>(conf);
             if (developmentTeam != null)
                 options["DevelopmentTeam"] = developmentTeam.Value;
+
+            Options.XCode.Compiler.ProvisioningStyle provisioningStyle = Options.GetObject<Options.XCode.Compiler.ProvisioningStyle>(conf);
+            if (provisioningStyle != null)
+                options["ProvisioningStyle"] = provisioningStyle.Value;
 
             Options.SelectOption(conf,
                 Options.Option(Options.XCode.Compiler.DebugInformationFormat.Dwarf, () => options["DebugInformationFormat"] = "dwarf"),
@@ -996,9 +1002,13 @@ namespace Sharpmake.Generators.Apple
             }
 
             OrderableStrings includePaths = conf.IncludePaths;
+            includePaths.AddRange(conf.IncludePrivatePaths);
             includePaths.AddRange(conf.DependenciesIncludePaths);
             options["IncludePaths"] = includePaths.JoinStrings(",\n", "\t\t\t\t\t\"", "\"").TrimEnd('\n');
-            if (conf.LibraryPaths.Count == 0)
+
+            OrderableStrings libraryPaths = conf.LibraryPaths;
+            libraryPaths.AddRange(conf.ResolvedDependencies.Select(libPaths => libPaths.TargetPath));
+            if (libraryPaths.Count == 0)
             {
                 options["LibraryPaths"] = RemoveLineTag;
                 options["RemoveLibraryPaths"] = RemoveLineTag;
@@ -1038,6 +1048,7 @@ namespace Sharpmake.Generators.Apple
             Strings linkerOptions = new Strings(conf.AdditionalLinkerOptions);
             linkerOptions.Add("-ObjC");
             linkerOptions.AddRange(conf.LibraryFiles.Select(library => "-l" + library));
+            linkerOptions.AddRange(conf.ResolvedDependencies.Where(library => library.Output != Project.Configuration.OutputType.None).Select(library => "-l" + library.TargetFileFullName));
 
             if (conf.DefaultOption == Options.DefaultTarget.Debug)
                 conf.Defines.Add("_DEBUG");
@@ -1048,6 +1059,8 @@ namespace Sharpmake.Generators.Apple
                 options["PreprocessorDefinitions"] = conf.Defines.Select(item => "\t\t\t\t\t\"" + item.Replace("\"", "") + "\"").Aggregate((first, next) => first + ",\n" + next).TrimEnd('\n', '\t');
             if (conf.AdditionalCompilerOptions.Any())
                 options["CompilerOptions"] = conf.AdditionalCompilerOptions.Select(item => "\t\t\t\t\t\"" + item.Replace("\"", "") + "\"").Aggregate((first, next) => first + ",\n" + next).TrimEnd('\n', '\t');
+            if (conf.AdditionalLibrarianOptions.Any())
+                throw new NotImplementedException(nameof(conf.AdditionalLibrarianOptions) + " not supported with XCode generator");
             if (linkerOptions.Any())
                 options["LinkerOptions"] = linkerOptions.Select(item => "\t\t\t\t\t\"" + item.Replace("\"", "") + "\"").Aggregate((first, next) => first + ",\n" + next).TrimEnd('\n', '\t');
             return options;
@@ -1057,8 +1070,12 @@ namespace Sharpmake.Generators.Apple
         {
             public static string ResolveProjectPaths(Project project, string stringToResolve)
             {
-                string resolvedString = stringToResolve.Replace("[project.SharpmakeCsPath]", project.SharpmakeCsPath).Replace("[project.SharpmakeCsProjectPath]", project.SharpmakeCsProjectPath);
-                return Util.SimplifyPath(resolvedString);
+                Resolver resolver = new Resolver();
+                using (resolver.NewScopedParameter("project", project))
+                {
+                    string resolvedString = resolver.Resolve(stringToResolve);
+                    return Util.SimplifyPath(resolvedString);
+                }
             }
 
             public static void ResolveProjectPaths(Project project, Strings stringsToResolve)
@@ -1071,7 +1088,7 @@ namespace Sharpmake.Generators.Apple
             }
         }
 
-        private class XCodeProjIdGenerator
+        private static class XCodeProjIdGenerator
         {
             private static System.Security.Cryptography.SHA1CryptoServiceProvider s_cryptoProvider;
             private static Dictionary<ProjectItem, string> s_hashRepository;
@@ -1183,7 +1200,7 @@ namespace Sharpmake.Generators.Apple
 
             protected virtual int CompareToInternal(ProjectItem other)
             {
-                return Identifier.CompareTo(other.Identifier);
+                return string.Compare(Identifier, other.Identifier, StringComparison.Ordinal);
             }
 
             public static bool operator ==(ProjectItem left, ProjectItem right)
@@ -1934,18 +1951,20 @@ namespace Sharpmake.Generators.Apple
             private ProjectFolder _mainGroup;
             private ProjectNativeTarget _nativeTarget;
             private string _developmentTeam;
+            private string _provisioningStyle;
             private ProjectConfigurationList _configurationList;
             private string _compatibilityVersion;
             private List<ProjectNativeTarget> _targets;
             private Dictionary<ProjectFolder, ProjectReference> _projectReferences;
             private bool _iCloudSupport;
 
-            public ProjectMain(string projectName, ProjectFolder mainGroup, ProjectConfigurationList configurationList, List<ProjectNativeTarget> targets, bool iCloudSupport, string developmentTeam)
+            public ProjectMain(string projectName, ProjectFolder mainGroup, ProjectConfigurationList configurationList, List<ProjectNativeTarget> targets, bool iCloudSupport, string developmentTeam, string provisioningStyle)
                 : base(ItemSection.PBXProject, projectName)
             {
                 _nativeTarget = null;
                 _mainGroup = mainGroup;
                 _developmentTeam = developmentTeam;
+                _provisioningStyle = provisioningStyle;
                 _configurationList = configurationList;
                 _compatibilityVersion = "Xcode 3.2";
                 _targets = targets;
@@ -1953,12 +1972,13 @@ namespace Sharpmake.Generators.Apple
                 _iCloudSupport = iCloudSupport;
             }
 
-            public ProjectMain(ProjectNativeTarget nativeTarget, ProjectFolder mainGroup, ProjectConfigurationList configurationList, bool iCloudSupport, string developmentTeam)
+            public ProjectMain(ProjectNativeTarget nativeTarget, ProjectFolder mainGroup, ProjectConfigurationList configurationList, bool iCloudSupport, string developmentTeam, string provisioningStyle)
                 : base(ItemSection.PBXProject, nativeTarget.Identifier)
             {
                 _nativeTarget = nativeTarget;
                 _mainGroup = mainGroup;
                 _developmentTeam = developmentTeam;
+                _provisioningStyle = provisioningStyle;
                 _configurationList = configurationList;
                 _compatibilityVersion = "Xcode 3.2";
                 _targets = new List<ProjectNativeTarget> { nativeTarget };
@@ -2015,6 +2035,7 @@ namespace Sharpmake.Generators.Apple
             public ProjectNativeTarget NativeTarget { get { return _nativeTarget; } }
             public ProjectFolder MainGroup { get { return _mainGroup; } }
             public string DevelopmentTeam { get { return _developmentTeam; } }
+            public string ProvisioningStyle { get { return _provisioningStyle; } }
             public ProjectConfigurationList ConfigurationList { get { return _configurationList; } }
             public string CompatibilityVersion { get { return _compatibilityVersion; } }
             public string ICloudSupport { get { return _iCloudSupport ? "1" : "0"; } }

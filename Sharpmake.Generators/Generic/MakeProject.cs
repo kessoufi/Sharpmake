@@ -17,9 +17,9 @@ using System.Linq;
 
 namespace Sharpmake.Generators.Generic
 {
-    public partial class MakeProject
+    public partial class MakeProject : IProjectGenerator
     {
-        private const string SolutionExtension = ".mk";
+        private const string _makefileExtension = ".mk";
         private const string RemoveLineTag = "REMOVE_LINE_TAG";
 
         private Builder _builder;
@@ -44,13 +44,11 @@ namespace Sharpmake.Generators.Generic
 
         public string GenerateProject(Project project, List<Project.Configuration> configurations, string projectPath, string projectFileName, out bool updated)
         {
-            // Create the target folder.
-            string solutionFolder = Util.GetCapitalizedPath(projectPath);
-            Directory.CreateDirectory(solutionFolder);
+            string projectDirectory = Util.GetCapitalizedPath(projectPath);
+            Directory.CreateDirectory(projectDirectory);
 
-            // Main solution file. 
-            string solutionFileContentsPath = solutionFolder + Path.DirectorySeparatorChar + projectFileName + SolutionExtension;
-            FileInfo solutionFileContentsInfo = new FileInfo(solutionFileContentsPath);
+            string fileFullPath = projectDirectory + Path.DirectorySeparatorChar + projectFileName + _makefileExtension;
+            FileInfo fileInfo = new FileInfo(fileFullPath);
 
             var fileGenerator = new FileGenerator();
             using (fileGenerator.Declare("item", new ProjectSettings(project, configurations, fileGenerator.Resolver)))
@@ -58,13 +56,11 @@ namespace Sharpmake.Generators.Generic
                 fileGenerator.Write(Template.GlobalTemplate);
             }
 
-            // Remove all line that contain RemoveLineTag
             fileGenerator.RemoveTaggedLines();
 
-            // Write the solution file
-            updated = _builder.Context.WriteGeneratedFile(project.GetType(), solutionFileContentsInfo, fileGenerator.ToMemoryStream());
+            updated = _builder.Context.WriteGeneratedFile(project.GetType(), fileInfo, fileGenerator.ToMemoryStream());
 
-            return solutionFileContentsInfo.FullName;
+            return fileInfo.FullName;
         }
 
         private static void ResolveProjectPaths(Project project, Strings stringsToResolve)
@@ -100,7 +96,7 @@ namespace Sharpmake.Generators.Generic
             private string _prebuiltStaticLibraries;
             private string _prebuiltStaticLibrariesDebug;
             private string _prebuiltStaticLibrariesRelease;
-            private string _prebuiltStaticLibrariesFinal;
+            private readonly string _prebuiltStaticLibrariesFinal;
 
             public ProjectSettings(Project project, List<Project.Configuration> configurations, Resolver resolver)
             {
@@ -245,7 +241,7 @@ namespace Sharpmake.Generators.Generic
         {
             private Options.AndroidMakefile.PrebuiltStaticLibraries _option;
             private string _armMode;
-            private string _libraryPath;
+            private readonly string _libraryPath;
 
             public PrebuiltStaticLibrary(Project project, Options.AndroidMakefile.PrebuiltStaticLibraries option)
             {

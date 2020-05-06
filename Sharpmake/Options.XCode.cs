@@ -75,6 +75,11 @@ namespace Sharpmake
                     }
                 }
 
+                public class ProductBundleIdentifier : StringOption
+                {
+                    public ProductBundleIdentifier(string value) : base(value) { }
+                }
+
                 public enum CppLanguageStandard
                 {
                     CPP98,
@@ -106,6 +111,11 @@ namespace Sharpmake
                 public class DevelopmentTeam : StringOption
                 {
                     public DevelopmentTeam(string value) : base(value) { }
+                }
+
+                public class ProvisioningStyle : StringOption
+                {
+                    public ProvisioningStyle(string value) : base(value) { }
                 }
 
                 public enum DeploymentPostProcessing
@@ -154,7 +164,7 @@ namespace Sharpmake
 
                 public abstract class Frameworks : Strings
                 {
-                    public Frameworks(params string[] paths)
+                    protected Frameworks(params string[] paths)
                         : base(paths)
                     { }
                 }

@@ -53,6 +53,7 @@ namespace Sharpmake
             private const string _projectConfigurationsStaticLinkTemplate =
                 @"    <Lib>
       <OutputFile>[options.OutputFile]</OutputFile>
+      <AdditionalOptions>[options.AdditionalLibrarianOptions]</AdditionalOptions>
       <AdditionalLibraryDirectories>[options.AdditionalLibraryDirectories]</AdditionalLibraryDirectories>
       <AdditionalDependencies>[options.AdditionalDependencies]</AdditionalDependencies>
       <ThinArchive>[options.ThinArchive]</ThinArchive>
@@ -70,7 +71,7 @@ namespace Sharpmake
       <AndroidSystemLibs>[options.AndroidSystemLibs]</AndroidSystemLibs>
       <LinkGccLibThumb>[options.LinkGccLibThumb]</LinkGccLibThumb>
       <ReportUndefinedSymbols>[options.ReportUndefinedSymbols]</ReportUndefinedSymbols>
-      UseLinker>[options.UseLinker]</UseLinker>
+      <UseLinker>[options.UseLinker]</UseLinker>
       <AdditionalOptions>[options.AdditionalLinkerOptions] %(AdditionalOptions)</AdditionalOptions>
     </Link>
 ";

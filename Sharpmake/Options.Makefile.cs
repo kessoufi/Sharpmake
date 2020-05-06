@@ -35,6 +35,8 @@ namespace Sharpmake
                     Default,
                     Cpp98,
                     Cpp11,
+                    Cpp14,
+                    Cpp17,
                     GnuCpp98,
                     GnuCpp11
                 }
@@ -90,6 +92,16 @@ namespace Sharpmake
                     NormalWarnings,
                     [Default]
                     MoreWarnings,
+                    Disable
+                }
+            }
+
+            public static class Linker
+            {
+                public enum LibGroup
+                {
+                    Enable,
+                    [Default]
                     Disable
                 }
             }

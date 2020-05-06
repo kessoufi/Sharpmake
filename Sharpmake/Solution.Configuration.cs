@@ -13,6 +13,8 @@
 // limitations under the License.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.CompilerServices;
 
 namespace Sharpmake
@@ -20,21 +22,70 @@ namespace Sharpmake
     public partial class Solution
     {
         [Resolver.Resolvable]
+        [DebuggerDisplay("{SolutionFileName}:{Name}:{PlatformName}")]
         public class Configuration : Sharpmake.Configuration
         {
+            /// <summary>
+            /// Gets the number of <see cref="Configuration"/> instances created so far during
+            /// Sharpmake's execution.
+            /// </summary>
             private static int s_count = 0;
-            public static int Count { get { return s_count; } }
+            public static int Count => s_count;
 
+            /// <summary>
+            /// Creates a new <see cref="Configuration"/> instance.
+            /// </summary>
             public Configuration()
             {
                 System.Threading.Interlocked.Increment(ref s_count);
             }
 
-            public Solution Solution { get { return Owner as Solution; } }
+            /// <summary>
+            /// Gets the <see cref="Solution"/> instance that owns this configuration.
+            /// </summary>
+            public Solution Solution => Owner as Solution;
 
+            /// <summary>
+            /// Name of this solution configuration.
+            /// </summary>
+            /// <remarks>
+            /// This name will be displayed in Visual Studio's configuration drop down list. (Or
+            /// other development tools that support multiple configuration per workspace.)
+            /// </remarks>
             public string Name = "[target.Name]";
-            public string SolutionFileName = "[solution.Name]";             // File name for the generated solution without extension, ex: "MySolution"
-            public string SolutionPath = "[solution.SharpmakeCsPath]";      // Path of SolutionFileName
+
+            /// <summary>
+            /// File name (without extension) of the solution that this
+            /// configuration must be written into.
+            /// </summary>
+            public string SolutionFileName = "[solution.Name]";
+
+            /// <summary>
+            /// Directory of the solution that this configuration must be written into.
+            /// </summary>
+            public string SolutionPath = "[solution.SharpmakeCsPath]";
+
+            /// <summary>
+            /// Gets the file name (without extension) of the solution that this configuration must
+            /// be written info.
+            /// </summary>
+            public string SolutionFilePath => Path.Combine(SolutionPath, SolutionFileName);
+
+            /// <summary>
+            /// File name (without extension) of the master BFF for this solution configuration.
+            /// </summary>
+            public string MasterBffFileName = "[conf.SolutionFileName]";
+
+            /// <summary>
+            /// Directory of the master BFF for this solution configuration.
+            /// </summary>
+            public string MasterBffDirectory = "[conf.SolutionPath]";
+
+            /// <summary>
+            /// Gets the file path (without extension) of the master BFF for this solution
+            /// configuration.
+            /// </summary>
+            public string MasterBffFilePath => Path.Combine(MasterBffDirectory, MasterBffFileName);
 
             // Can be set to customize solution platform name
             private string _platformName = null;
@@ -42,7 +93,7 @@ namespace Sharpmake
             {
                 get
                 {
-                    return string.IsNullOrEmpty(_platformName) ? Util.GetSimplePlatformString(Platform) : _platformName;
+                    return string.IsNullOrEmpty(_platformName) ? Util.GetPlatformString(Platform, null, Target) : _platformName;
                 }
                 set
                 {
@@ -57,22 +108,43 @@ namespace Sharpmake
             public void AddProject<TPROJECTTYPE>(
                 ITarget projectTarget,
                 bool inactiveProject = false,
+                string solutionFolder = "",
                 [CallerFilePath] string sourceFilePath = "",
                 [CallerLineNumber] int sourceLineNumber = 0)
             {
-                AddProject(typeof(TPROJECTTYPE), projectTarget, inactiveProject, Util.FormatCallerInfo(sourceFilePath, sourceLineNumber));
+                AddProjectInternal(typeof(TPROJECTTYPE), projectTarget, inactiveProject, solutionFolder, Util.FormatCallerInfo(sourceFilePath, sourceLineNumber));
             }
 
             public void AddProject(
                 Type projectType,
                 ITarget projectTarget,
                 bool inactiveProject = false,
+                string solutionFolder = "",
                 [CallerFilePath] string sourceFilePath = "",
                 [CallerLineNumber] int sourceLineNumber = 0)
             {
-                AddProject(projectType, projectTarget, inactiveProject, Util.FormatCallerInfo(sourceFilePath, sourceLineNumber));
+                AddProjectInternal(projectType, projectTarget, inactiveProject, solutionFolder, Util.FormatCallerInfo(sourceFilePath, sourceLineNumber));
             }
 
+            public void SetStartupProject<TPROJECTTYPE>(
+                [CallerFilePath] string sourceFilePath = "",
+                [CallerLineNumber] int sourceLineNumber = 0)
+            {
+                IncludedProjectInfo includedProjectInfo = GetProject(typeof(TPROJECTTYPE));
+
+                if (includedProjectInfo == null)
+                {
+                    throw new Error(string.Format("{0} error : Can't set project {1} as startup project of solution {2} and target {3} since it is not included in the configuration.",
+                        Util.FormatCallerInfo(sourceFilePath, sourceLineNumber),
+                        typeof(TPROJECTTYPE).Name,
+                        Solution.Name,
+                        Target));
+                }
+
+                StartupProject = includedProjectInfo;
+            }
+
+            [DebuggerDisplay("{Project == null ? Type.Name : Project.Name} {Configuration == null ? Target.Name : Configuration.Name}")]
             public class IncludedProjectInfo
             {
                 // Type of the project, need this to resolve Project instance
@@ -87,6 +159,11 @@ namespace Sharpmake
                 // Target of the project, need to resolve the Configuration
                 public ITarget Target;
 
+                /// <summary>
+                /// The solution folder to use for the project in this solution. It overrides <see cref="Sharpmake.Project.Configuration.SolutionFolder"/>
+                /// </summary>
+                public string SolutionFolder;
+
                 public override string ToString()
                 {
                     return String.Format("{0} {1}", Project, Target);
@@ -97,14 +174,15 @@ namespace Sharpmake
                 public bool InactiveProject;
 
                 // resolved state, whether this project configuration is built in the solution
-                internal enum Build
+                public enum Build
                 {
                     Unknown,
                     No,
                     Yes,
                     YesThroughDependency
                 };
-                internal Build ToBuild = Build.Unknown;
+
+                public Build ToBuild { get; internal set; } = Build.Unknown;
             }
 
             //Holds the reference to the startup project. When the project will be resolved, 
@@ -128,7 +206,7 @@ namespace Sharpmake
                 return null;
             }
 
-            private void AddProject(Type projectType, ITarget projectTarget, bool inactiveProject, string callerInfo)
+            private void AddProjectInternal(Type projectType, ITarget projectTarget, bool inactiveProject, string solutionFolder, string callerInfo)
             {
                 IncludedProjectInfo includedProjectInfo = GetProject(projectType);
 
@@ -139,7 +217,8 @@ namespace Sharpmake
                         {
                             Type = projectType,
                             Target = projectTarget,
-                            InactiveProject = inactiveProject
+                            InactiveProject = inactiveProject,
+                            SolutionFolder = solutionFolder
                         }
                     );
                 }
@@ -166,8 +245,12 @@ namespace Sharpmake
                 resolver.RemoveParameter("target");
 
                 Util.ResolvePath(Solution.SharpmakeCsPath, ref SolutionPath);
+                Util.ResolvePath(Solution.SharpmakeCsPath, ref MasterBffDirectory);
                 if (Solution.IsFileNameToLower)
+                {
                     SolutionFileName = SolutionFileName.ToLower();
+                    MasterBffFileName = MasterBffFileName.ToLower();
+                }
             }
         }
     }

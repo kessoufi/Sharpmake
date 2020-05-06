@@ -33,7 +33,7 @@ namespace Sharpmake
         private AppDomain _remoteDomain;
         private ExtensionChecker _validator;
 
-        class ExtensionChecker : MarshalByRefObject
+        public class ExtensionChecker : MarshalByRefObject
         {
             private readonly Dictionary<string, bool> _loadedAssemblies = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
@@ -73,7 +73,7 @@ namespace Sharpmake
                 }
             }
 
-            public bool IsSharpmakeExtension(Assembly assembly)
+            public static bool IsSharpmakeExtension(Assembly assembly)
             {
                 if (assembly == null)
                     throw new ArgumentNullException(nameof(assembly));
@@ -97,7 +97,7 @@ namespace Sharpmake
         /// <param name="assemblyPath">The path of the assembly to check whether it's an extension.</param>
         /// <returns>`true` if it is an extension, `false` otherwise.</returns>
         /// <remarks>
-        /// This method will instanciate a remote <see cref="AppDomain"/> if none was created.
+        /// This method will instantiate a remote <see cref="AppDomain"/> if none was created.
         /// </remarks>
         public bool IsExtension(string assemblyPath)
         {
@@ -137,15 +137,14 @@ namespace Sharpmake
             if (fastLoad)
             {
                 if (!IsExtension(assemblyPath))
-                    throw new Error($"{assemblyPath} is not a Sharpmake extension.");
+                    return null;
             }
 
             Assembly assembly = Assembly.LoadFrom(assemblyPath);
             if (!fastLoad)
             {
-                var validator = new ExtensionChecker();
-                if (!validator.IsSharpmakeExtension(assembly))
-                    throw new Error($"{assemblyPath} is not a Sharpmake extension.");
+                if (!ExtensionChecker.IsSharpmakeExtension(assembly))
+                    return null;
             }
 
             return assembly;
@@ -173,7 +172,9 @@ namespace Sharpmake
                 {
                     try
                     {
-                        assemblies.Add(LoadExtension(dll, true));
+                        Assembly assembly = LoadExtension(dll, true);
+                        if (assembly != null)
+                            assemblies.Add(assembly);
                     }
                     catch (Exception ex)
                     {

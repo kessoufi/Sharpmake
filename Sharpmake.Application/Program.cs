@@ -17,7 +17,9 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Sharpmake.Generators;
 using Sharpmake.Generators.VisualStudio;
 
@@ -49,9 +51,13 @@ namespace Sharpmake.Application
         private static int s_errorCount = 0;
         private static int s_warningCount = 0;
 
-        public static void LogWrite(string msg, params object[] args)
+        public static void LogWrite(string format, params object[] args)
         {
-            string message = string.Format(msg, args);
+            LogWrite(string.Format(format, args));
+        }
+
+        public static void LogWrite(string message)
+        {
             string prefix = String.Empty;
 
             if (DebugEnable)
@@ -65,21 +71,29 @@ namespace Sharpmake.Application
             if (Debugger.IsAttached)
             {
                 message = message.Replace(prefix + Util.CallerInfoTag, String.Empty);
-                Debug.Write(message);
+                Trace.Write(message);
             }
         }
 
-        public static void LogWriteLine(string msg, params object[] args)
+        public static void LogWriteLine(string format, params object[] args)
         {
-            LogWrite(msg + Environment.NewLine, args);
+            LogWriteLine(string.Format(format, args));
         }
 
+        public static void LogWriteLine(string msg)
+        {
+            LogWrite(msg + Environment.NewLine);
+        }
 
-        public static void DebugWrite(string msg, params object[] args)
+        public static void DebugWrite(string format, params object[] args)
+        {
+            DebugWrite(string.Format(format, args));
+        }
+
+        public static void DebugWrite(string message)
         {
             if (DebugEnable)
             {
-                string message = args.Length > 0 ? string.Format(msg, args) : msg;
                 TimeSpan span = DateTime.Now - s_startTime;
 
                 string prefix = String.Format("[{0:00}:{1:00}] ", span.Minutes, span.Seconds);
@@ -87,42 +101,62 @@ namespace Sharpmake.Application
 
                 Console.Write(message);
                 if (Debugger.IsAttached)
-                    Debug.Write(message);
+                    Trace.Write(message);
             }
         }
 
-        public static void DebugWriteLine(string msg, params object[] args)
+        public static void DebugWriteLine(string format, params object[] args)
+        {
+            DebugWriteLine(string.Format(format, args));
+        }
+
+        public static void DebugWriteLine(string msg)
         {
             if (DebugEnable)
-                DebugWrite(msg + Environment.NewLine, args);
+                DebugWrite(msg + Environment.NewLine);
         }
 
-        public static void WarningWrite(string msg, params object[] args)
+        public static void WarningWrite(string format, params object[] args)
+        {
+            WarningWrite(string.Format(format, args));
+        }
+
+        public static void WarningWrite(string msg)
         {
             Interlocked.Increment(ref s_warningCount);
-            Console.Write(msg, args);
+            Console.Write(msg);
             if (Debugger.IsAttached)
-                Debug.Write(args.Length > 0 ? string.Format(msg, args) : msg);
+                Trace.Write(msg);
         }
 
-        public static void ErrorWrite(string msg, params object[] args)
+        public static void ErrorWrite(string format, params object[] args)
+        {
+            ErrorWrite(string.Format(format, args));
+        }
+
+        public static void ErrorWrite(string msg)
         {
             Interlocked.Increment(ref s_errorCount);
-            Console.Write(msg, args);
+            Console.Write(msg);
             if (Debugger.IsAttached)
-                Debug.Write(args.Length > 0 ? string.Format(msg, args) : msg);
+                Trace.Write(msg);
         }
 
-        public static void ErrorWriteLine(string msg, params object[] args)
+        public static void ErrorWriteLine(string format, params object[] args)
         {
-            ErrorWrite(msg + Environment.NewLine, args);
+            ErrorWrite(string.Format(format, args));
+        }
+
+        public static void ErrorWriteLine(string msg)
+        {
+            ErrorWrite(msg + Environment.NewLine);
         }
 
         #endregion
 
         private static int Main()
         {
-            if (CommandLine.ContainParameter("-breakintodebugger"))
+            if (CommandLine.ContainParameter("breakintodebugger"))
             {
                 System.Windows.Forms.MessageBox.Show("Debugger requested. Please attach a debugger and press OK");
                 Debugger.Break();
@@ -137,7 +171,18 @@ namespace Sharpmake.Application
             try
             {
                 DebugEnable = CommandLine.ContainParameter("verbose") || CommandLine.ContainParameter("debug") || CommandLine.ContainParameter("diagnostics");
-                LogWriteLine("sharpmake");
+
+                var sharpmakeAssembly = Assembly.GetExecutingAssembly();
+                Version version = sharpmakeAssembly.GetName().Version;
+                string versionString = string.Join(".", version.Major, version.Minor, version.Build);
+                string informationalVersion = sharpmakeAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+                if (version.Revision != 0 || informationalVersion == null || informationalVersion.IndexOf("+Branch.") == -1)
+                {
+                    versionString += " (non-official)";
+                    if (DebugEnable && informationalVersion != null)
+                        versionString += " " + informationalVersion;
+                }
+                LogWriteLine($"sharpmake {versionString}");
                 LogWriteLine("  arguments : {0}", CommandLine.GetProgramCommandLine());
                 LogWriteLine("  directory : {0}", Directory.GetCurrentDirectory());
                 LogWriteLine(string.Empty);
@@ -149,13 +194,28 @@ namespace Sharpmake.Application
                     return (int)ExitCode.Success;
                 }
 
-                if (DebugEnable)
-                    PlatformRegistry.PlatformImplementationExtensionRegistered += LogPlatformImplementationExtensionRegistered;
+                AppDomain.CurrentDomain.AssemblyLoad += AppDomain_AssemblyLoad;
+
+                // Log warnings and errors from builder
+                Assembler.EventOutputError += ErrorWrite;
+                Assembler.EventOutputWarning += WarningWrite;
 
                 CommandLine.ExecuteOnObject(parameters);
 
                 if (parameters.Exit)
                     return (int)ExitCode.Success;
+
+                const string sharpmakeSymbolPrefix = "_SHARPMAKE";
+                List<string> invalidSymbols = parameters.Defines.Where(define => define.StartsWith(sharpmakeSymbolPrefix)).ToList();
+                if (invalidSymbols.Any())
+                {
+                    string invalidSymbolsString = string.Join(", ", invalidSymbols);
+                    throw new Error($"Only Sharpmake process can define symbols starting with {sharpmakeSymbolPrefix}. Invalid symbols defined: {invalidSymbolsString}");
+                }
+
+                parameters.Defines.Add(sharpmakeSymbolPrefix); // A generic sharpmake define to allow scripts to exclude part of code if not used with sharpmake
+                parameters.Defines.Add($"{sharpmakeSymbolPrefix}_{version.Major}_{version.Minor}_X");
+                parameters.Defines.Add($"{sharpmakeSymbolPrefix}_{version.Major}_{version.Minor}_{version.Build}");
 
                 parameters.Validate();
 
@@ -187,7 +247,7 @@ namespace Sharpmake.Application
                             oneInstanceMutex.WaitOne();
                         }
                     }
-                    catch (System.Threading.AbandonedMutexException)
+                    catch (AbandonedMutexException)
                     {
                         // This occurs if another sharpmake is killed in the debugger
                     }
@@ -210,22 +270,15 @@ namespace Sharpmake.Application
                             {
                                 exitCode = ExitCode.Error;
                                 DebugWriteLine($"{regressions.Count} Regressions detected:");
-                                var fileChanges = regressions.Where(x => x.FileStatus == BuildContext.RegressionTest.FileStatus.Different).ToList();
-                                if (fileChanges.Count > 0)
-                                {
-                                    DebugWriteLine($"  {fileChanges.Count} files have changed from the reference:");
-                                    fileChanges.ForEach(x =>
-                                    {
-                                        DebugWriteLine($"    Exp: {x.ReferencePath}");
-                                        DebugWriteLine($"    Was: {x.OutputPath}");
-                                    });
-                                }
+                                List<BuildContext.RegressionTest.OutputInfo> fileChanges = regressions.Where(x => x.FileStatus == BuildContext.RegressionTest.FileStatus.Different).ToList();
+                                LogFileChanges(fileChanges, parameters.RegressionDiff);
 
-                                var fileMissing = regressions.Where(x => x.FileStatus == BuildContext.RegressionTest.FileStatus.NotGenerated).ToList();
+                                var fileMissing = regressions.Where(x => x.FileStatus == BuildContext.RegressionTest.FileStatus.NotGenerated).Select(x => x.ReferencePath).ToList();
                                 if (fileMissing.Count > 0)
                                 {
+                                    fileMissing.Sort();
                                     DebugWriteLine($"  {fileMissing.Count} files are missing from the output:");
-                                    fileMissing.ForEach(x => DebugWriteLine($"    {x.ReferencePath}"));
+                                    fileMissing.ForEach(x => DebugWriteLine($"    {x}"));
                                 }
                             }
                         }
@@ -276,14 +329,12 @@ namespace Sharpmake.Application
                 // Then log details
                 LogWriteLine(Util.GetCompleteExceptionMessage(e, "\t"));
                 exitCode = ExitCode.Error;
-                Environment.Exit((int)exitCode);
             }
             catch (InternalError e)
             {
                 ErrorWriteLine(Environment.NewLine + "Internal Error:");
                 LogWriteLine(Util.GetCompleteExceptionMessage(e, "\t"));
                 exitCode = ExitCode.InternalError;
-                Environment.Exit((int)exitCode);
             }
 #if !DEBUG // Use this to catch right away if an exception throw
             catch (Exception e)
@@ -324,32 +375,35 @@ namespace Sharpmake.Application
             return (int)exitCode;
         }
 
-        private static void LogPlatformImplementationExtensionRegistered(object sender, PlatformImplementationExtensionRegisteredEventArgs e)
+        private static void AppDomain_AssemblyLoad(object sender, AssemblyLoadEventArgs args)
         {
-            LogWriteLine("Loaded platform extension {0} (Found {1} implementation class{2})", e.ExtensionAssembly.Location, e.Interfaces.Count, e.Interfaces.Count > 1 ? "es" : string.Empty);
+            LogSharpmakeExtensionLoaded(args.LoadedAssembly);
         }
 
-        private static void GenerateAll(BuildContext.BaseBuildContext buildContext, Argument parameters)
+        private static void LogSharpmakeExtensionLoaded(Assembly extensionAssembly)
         {
-            if (parameters.GenerateDebugSolution)
+            if (extensionAssembly == null)
+                return;
+
+            if (!ExtensionLoader.ExtensionChecker.IsSharpmakeExtension(extensionAssembly))
+                return;
+
+            AssemblyName extensionName = extensionAssembly.GetName();
+            Version version = extensionName.Version;
+            string versionString = string.Join(".", version.Major, version.Minor, version.Build);
+            string informationalVersion = extensionAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (version.Revision != 0 || informationalVersion == null || informationalVersion.IndexOf("+Branch.") == -1)
             {
-                using (Builder builder = CreateBuilder(buildContext, parameters, true, true))
-                {
-                    LogWriteLine("Generate debug solution...");
-
-                    var outputs = builder.Generate();
-                    foreach (var output in outputs)
-                    {
-                        if (output.Value.Exception != null)
-                            throw new Error(output.Value.Exception, "Error encountered while generating {0}", output.Key);
-                    }
-
-                    LogWriteGenerateResults(outputs);
-                    Console.WriteLine("");
-                }
+                versionString += " (non-official)";
+                if (DebugEnable && informationalVersion != null)
+                    versionString += " " + informationalVersion;
             }
+            LogWriteLine("    {0} {1} loaded from '{2}'", extensionName.Name, versionString, extensionAssembly.Location);
+        }
 
-            using (Builder builder = CreateBuilder(buildContext, parameters, true))
+        private static void CreateBuilderAndGenerate(BuildContext.BaseBuildContext buildContext, Argument parameters, bool generateDebugSolution)
+        {
+            using (Builder builder = CreateBuilder(buildContext, parameters, true, generateDebugSolution))
             {
                 if (parameters.CleanBlobsOnly)
                 {
@@ -363,6 +417,9 @@ namespace Sharpmake.Application
                 }
                 else
                 {
+                    if (parameters.GenerateDebugSolution)
+                        LogWriteLine("Generate debug solution...");
+
                     var outputs = builder.Generate();
                     foreach (var output in outputs)
                     {
@@ -371,7 +428,7 @@ namespace Sharpmake.Application
                     }
 
                     if (parameters.DumpDependency)
-                        Sharpmake.DependencyTracker.Instance.DumpGraphs(outputs);
+                        DependencyTracker.Instance.DumpGraphs(outputs);
 
                     LogWriteGenerateResults(outputs);
                 }
@@ -379,6 +436,19 @@ namespace Sharpmake.Application
 
             LogWriteLine("  time: {0:0.00} sec.", (DateTime.Now - s_startTime).TotalSeconds);
             LogWriteLine("  completed on {0}.", DateTime.Now);
+        }
+
+        private static void GenerateAll(BuildContext.BaseBuildContext buildContext, Argument parameters)
+        {
+            if (parameters.GenerateDebugSolution)
+            {
+                CreateBuilderAndGenerate(buildContext, parameters, generateDebugSolution: true);
+                // because the debug solution generation runs before the user code,
+                // we need to do some cleanup so we don't pollute the subsequent generation
+                ExtensionMethods.ClearVisualStudioDirCaches();
+            }
+
+            CreateBuilderAndGenerate(buildContext, parameters, generateDebugSolution: false);
         }
 
         private static ExitCode AnalyzeConfigureOrder(Argument parameters, bool stopOnFirstError)
@@ -461,8 +531,6 @@ namespace Sharpmake.Application
                     LogWriteLine("    {0}", file);
             }
 
-            PackageReferences.LogPackagesVersionsDiscrepancy();
-
             LogWriteLine("  Results:");
             if (generatedProjectFiles.Count > 0 || skippedProjectFiles.Count > 0)
             {
@@ -490,7 +558,9 @@ namespace Sharpmake.Application
                 parameters.BlobOnly,
                 parameters.SkipInvalidPath,
                 parameters.Diagnostics,
-                Program.GetGeneratorsManager);
+                Program.GetGeneratorsManager,
+                parameters.Defines
+            );
 
             // Allow message log from builder.
             builder.EventOutputError += ErrorWrite;
@@ -501,48 +571,45 @@ namespace Sharpmake.Application
             if (parameters.ProfileOutput)
                 builder.EventOutputProfile += LogWrite;
 
-            // generate debug solution
-            if (generateDebugSolution)
+            try
             {
-                DebugProjectGenerator.GenerateDebugSolution(parameters.Sources, builder.Arguments);
+                // Generate debug solution
+                if (generateDebugSolution)
+                {
+                    DebugProjectGenerator.GenerateDebugSolution(parameters.Sources, builder.Arguments, parameters.DebugSolutionStartArguments, parameters.Defines.ToArray());
+                    builder.BuildProjectAndSolution();
+                    return builder;
+                }
+
+                // Load user input (either files or pre-built assemblies)
+                switch (parameters.Input)
+                {
+                    case Argument.InputType.File:
+                        builder.ExecuteEntryPointInAssemblies<Main>(builder.LoadSharpmakeFiles(parameters.Sources));
+                        break;
+                    case Argument.InputType.Assembly:
+                        builder.ExecuteEntryPointInAssemblies<Main>(builder.LoadAssemblies(parameters.Assemblies));
+                        break;
+                    case Argument.InputType.Undefined:
+                    default:
+                        throw new Error("Sharpmake input missing, use /sources() or /assemblies()");
+                }
+
+                if (builder.Arguments.TypesToGenerate.Count == 0)
+                    throw new Error("Sharpmake has nothing to generate!" + Environment.NewLine
+                        + $"  Make sure to have a static entry point method flagged with [{typeof(Main).FullName}] attribute, and add 'arguments.Generate<[your_class]>();' in it.");
+                builder.Context.ConfigureOrder = builder.Arguments.ConfigureOrder;
+
+                // Call all configuration's methods and resolve project/solution member's values
                 builder.BuildProjectAndSolution();
+
                 return builder;
             }
-
-            switch (parameters.Input)
+            catch
             {
-                case Argument.InputType.File:
-                    {
-                        try
-                        {
-                            builder.LoadSharpmakeFiles(parameters.Sources);
-                        }
-                        catch (Exception)
-                        {
-                            builder.Dispose();
-                            throw;
-                        }
-                    }
-                    break;
-                case Argument.InputType.Assembly:
-                    {
-                        try
-                        {
-                            builder.LoadAssemblies(parameters.Assemblies);
-                        }
-                        catch (Exception)
-                        {
-                            builder.Dispose();
-                            throw;
-                        }
-                    }
-                    break;
-                default:
-                    builder.Dispose();
-                    throw new Error("sharpmake input missing, use /sources() or /assemblies()");
+                builder.Dispose();
+                throw;
             }
-
-            return builder;
         }
 
         private static void RecursivePrintMethodInfo(Analyzer.ConfigureMethodInfo method, ISet<string> set, int nested = 0)
@@ -556,6 +623,122 @@ namespace Sharpmake.Application
                     RecursivePrintMethodInfo(dependent, set, nested);
             }
         }
+
+        private static string LocateDiffExecutable()
+        {
+            var candidateDirectories = new List<string>();
+
+            if (!Util.UsesUnixSeparator) // poor way to test the OS...
+            {
+                try
+                {
+                    candidateDirectories.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Git\usr\bin"));
+                    candidateDirectories.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Git\usr\bin"));
+                }
+                catch { }
+            }
+            candidateDirectories.AddRange(Environment.GetEnvironmentVariable("PATH").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries));
+
+            foreach (var candidateDirectory in candidateDirectories)
+            {
+                foreach (var candidateExeName in new[] { "diff", "diff.exe" })
+                {
+                    var candidatePath = Path.Combine(candidateDirectory, candidateExeName);
+                    if (File.Exists(candidatePath))
+                        return candidatePath;
+                }
+            }
+
+            return null;
+        }
+
+        private static void LogFileChanges(List<BuildContext.RegressionTest.OutputInfo> fileChanges, bool showRegressionDiff)
+        {
+            if (fileChanges.Count == 0)
+                return;
+
+            var diffs = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            object dictionaryAccess = new object();
+
+
+            string diffExecutable = LocateDiffExecutable();
+            if (!showRegressionDiff || diffExecutable == null)
+            {
+                DebugWriteLine($"  {fileChanges.Count} files have changed from the reference:");
+                fileChanges.ForEach(x =>
+                {
+                    DebugWriteLine($"    Exp: {x.ReferencePath}");
+                    DebugWriteLine($"    Was: {x.OutputPath}");
+                });
+            }
+            else
+            {
+                DebugWriteLine($"  {fileChanges.Count} files have changed from the reference. Aggregating diff using '{diffExecutable}'");
+                Parallel.ForEach(fileChanges, x =>
+                {
+                    bool refFileExists = File.Exists(x.ReferencePath);
+                    bool outFileExists = File.Exists(x.OutputPath);
+
+                    if (refFileExists && outFileExists)
+                    {
+                        Process process = new Process();
+                        process.StartInfo.FileName = diffExecutable;
+                        process.StartInfo.UseShellExecute = false;
+                        process.StartInfo.CreateNoWindow = true;
+                        process.StartInfo.RedirectStandardOutput = true;
+
+                        // -i, --ignore-case               ignore case differences in file contents
+                        // -u, -U NUM, --unified[=NUM]   output NUM (default 3) lines of unified context
+                        // -w, --ignore-all-space          ignore all white space
+                        process.StartInfo.Arguments = $"-i -u -w {x.ReferencePath} {x.OutputPath}";
+
+                        process.Start();
+
+                        var output = process.StandardOutput.ReadToEnd();
+                        process.WaitForExit();
+
+                        var lines = output.Split('\n').Where(l => (l.Length > 1 && (l[0] == '+' || l[0] == '-') && !l.StartsWith("--- ") && !l.StartsWith("+++ ")));
+                        var diff = string.Concat(lines);
+                        lock (dictionaryAccess)
+                        {
+                            List<string> currentList = null;
+                            if (!diffs.TryGetValue(diff, out currentList))
+                                diffs[diff] = new List<string> { x.OutputPath };
+                            else
+                                currentList.Add(x.OutputPath);
+                        }
+                    }
+                    else if (!refFileExists)
+                        DebugWriteLine($"    ExtraFileGenerated: {x.OutputPath}");
+                    else if (!outFileExists)
+                        DebugWriteLine($"    MissingFileInOutput: {x.ReferencePath}");
+                });
+
+                int i = 0;
+                foreach (var diff in diffs.OrderByDescending(d => d.Value.Count))
+                {
+                    DebugWriteLine(
+                        $"    Diff block {++i}/{diffs.Count}"
+                        + (diff.Value.Count > 1 ? $" shared by {diff.Value.Count} files:" : " only in '" + diff.Value.First() + "':")
+                    );
+                    int j = 0;
+                    foreach (var file in diff.Value.OrderBy(f => f))
+                        DebugWriteLine($"      {++j}/{diff.Value.Count}  {file}");
+
+                    var diffLines = diff.Key.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (diffLines.Length == 0)
+                    {
+                        DebugWriteLine("        // only whitespace or casing changes");
+                    }
+                    else
+                    {
+                        foreach (var diffLine in diffLines)
+                            DebugWriteLine($"    {diffLine}");
+                    }
+                }
+            }
+        }
+
 
         public static IGeneratorManager GetGeneratorsManager()
         {

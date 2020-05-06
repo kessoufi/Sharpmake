@@ -98,10 +98,10 @@ endif
   CPPFLAGS  += -MMD -MP $(DEFINES) $(INCLUDES)
   CFLAGS    += $(CPPFLAGS) [options.CFLAGS]
   CXXFLAGS  += $(CFLAGS) [options.CXXFLAGS]
-  LDFLAGS   += [options.LibraryPaths]
-  LIBS      += [options.DependenciesLibraryFiles] [options.LibraryFiles]
+  LDFLAGS   += [options.LibraryPaths] [options.AdditionalLinkerOptions]
+  LDLIBS    += [options.LibsStartGroup][options.DependenciesLibraryFiles] [options.LibraryFiles][options.LibsEndGroup]
   RESFLAGS  += $(DEFINES) $(INCLUDES)
-  LDDEPS    += [options.DependenciesLibraryFiles]
+  LDDEPS    += [options.LDDEPS]
   LINKCMD    = [options.LinkCommand]
   define PREBUILDCMDS
   endef
@@ -116,13 +116,13 @@ endif
 ";
                 public static string LinkCommandLib = "$(AR) -rcs $(TARGET) $(OBJECTS)";
 
-                public static string LinkCommandExe = "$(CXX) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(RESOURCES) $(LIBS)";
+                public static string LinkCommandExe = "$(CXX) -o $(TARGET) $(OBJECTS) $(LDFLAGS) $(RESOURCES) $(LDLIBS)";
 
                 public static string ObjectsVariableBegin = "ifeq ($(config),[name])\n";
 
                 public static string ObjectsVariableElement = "  [excludeChar]OBJECTS += $(OBJDIR)/[objectFile]\n";
 
-                public static string ObjectsVariableEnd = "\nendif\n\n";
+                public static string ObjectsVariableEnd = "endif\n\n";
 
                 public static string ProjectRulesGeneral =
 @"RESOURCES := \
@@ -153,12 +153,14 @@ else
 	$(SILENT) if not exist $(subst /,\\,$(TARGETDIR)) mkdir $(subst /,\\,$(TARGETDIR))
 endif
 
+ifneq ($(OBJDIR),$(TARGETDIR))
 $(OBJDIR):
 	@echo Creating $(OBJDIR)
 ifeq (posix,$(SHELLTYPE))
 	$(SILENT) mkdir -p $(OBJDIR)
 else
 	$(SILENT) if not exist $(subst /,\\,$(OBJDIR)) mkdir $(subst /,\\,$(OBJDIR))
+endif
 endif
 
 clean:
@@ -187,10 +189,18 @@ endif
 
 ";
 
-                public static string ObjectRule =
+                public static readonly string ObjectRuleCxx =
 @"$(OBJDIR)/[objectFile]: [sourceFile] | $(OBJDIR)
 	@echo $(notdir $<)
 	$(SILENT) $(CXX) $(CXXFLAGS) -o ""$@"" -c ""$<""
+	$(SILENT) $(POSTFILECMDS)
+
+";
+
+                public static readonly string ObjectRuleC =
+@"$(OBJDIR)/[objectFile]: [sourceFile] | $(OBJDIR)
+	@echo $(notdir $<)
+	$(SILENT) $(CXX)  $(CFLAGS) -x c -o ""$@"" -c ""$<""
 	$(SILENT) $(POSTFILECMDS)
 
 ";

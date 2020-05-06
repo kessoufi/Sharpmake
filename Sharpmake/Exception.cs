@@ -16,6 +16,7 @@ using System.Runtime.Serialization;
 
 namespace Sharpmake
 {
+    [Serializable]
     public class Error : Exception
     {
         public Error()
@@ -47,7 +48,8 @@ namespace Sharpmake
         }
 
         protected Error(SerializationInfo info, StreamingContext context)
-            : base(info, context) { }
+            : base(info, context)
+        { }
     }
 
     [Serializable]
@@ -70,7 +72,8 @@ namespace Sharpmake
         { }
 
         protected InternalError(SerializationInfo info, StreamingContext context)
-            : base(info, context) { }
+            : base(info, context)
+        { }
 
         public static void Valid(bool condition)
         {

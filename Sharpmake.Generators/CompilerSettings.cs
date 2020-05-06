@@ -18,6 +18,7 @@ namespace Sharpmake.Generators
     public class CompilerSettings
     {
         public string CompilerName { get; private set; }
+        public CompilerFamily FastBuildCompilerFamily { get; private set; }
         public Platform PlatformFlags { get; set; } // TODO: Remove the public setter.
         public Strings ExtraFiles { get; private set; }
         public string Executable { get; private set; }
@@ -27,6 +28,7 @@ namespace Sharpmake.Generators
 
         public CompilerSettings(
             string compilerName,
+            CompilerFamily compilerFamily,
             Platform platform,
             Strings extraFiles,
             string executable,
@@ -36,6 +38,7 @@ namespace Sharpmake.Generators
         )
         {
             CompilerName = compilerName;
+            FastBuildCompilerFamily = compilerFamily;
             PlatformFlags = platform;
             ExtraFiles = extraFiles;
             Executable = executable;
@@ -44,11 +47,23 @@ namespace Sharpmake.Generators
             Configurations = configurations;
         }
 
+        public enum LinkerType
+        {
+            Auto,
+            MSVC,
+            GCC,
+            SNCPS3,
+            ClangOrbis,
+            GreenHillsExlr,
+            CodeWarriorLd
+        }
+
         public class Configuration
         {
             public string BinPath { get; set; }
             public string LinkerPath { get; set; }
             public string ResourceCompiler { get; set; }
+            public string EmbeddedResourceCompiler { get; set; }
             public string Compiler { get; set; }
             public string Librarian { get; set; }
             public string Linker { get; set; }
@@ -57,28 +72,33 @@ namespace Sharpmake.Generators
             public string Executable { get; set; }
             public string UsingOtherConfiguration { get; set; }
             public Platform Platform { get; private set; }
+            public LinkerType FastBuildLinkerType { get; set; }
 
             public Configuration(
                 Platform platform,
                 string binPath = FileGeneratorUtilities.RemoveLineTag,
                 string linkerPath = FileGeneratorUtilities.RemoveLineTag,
                 string resourceCompiler = FileGeneratorUtilities.RemoveLineTag,
+                string embeddedResourceCompiler = FileGeneratorUtilities.RemoveLineTag,
                 string compiler = FileGeneratorUtilities.RemoveLineTag,
                 string librarian = FileGeneratorUtilities.RemoveLineTag,
                 string linker = FileGeneratorUtilities.RemoveLineTag,
                 string executable = FileGeneratorUtilities.RemoveLineTag,
-                string usingOtherConfiguration = FileGeneratorUtilities.RemoveLineTag
+                string usingOtherConfiguration = FileGeneratorUtilities.RemoveLineTag,
+                LinkerType fastBuildLinkerType = LinkerType.Auto
             )
             {
                 BinPath = binPath;
                 LinkerPath = linkerPath;
                 ResourceCompiler = resourceCompiler;
+                EmbeddedResourceCompiler = embeddedResourceCompiler;
                 Compiler = compiler;
                 Librarian = librarian;
                 Linker = linker;
                 Executable = executable;
                 UsingOtherConfiguration = usingOtherConfiguration;
                 Platform = platform;
+                FastBuildLinkerType = fastBuildLinkerType;
             }
         }
     }

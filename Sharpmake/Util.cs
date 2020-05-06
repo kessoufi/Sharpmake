@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Ubisoft Entertainment
+// Copyright (c) 2017 Ubisoft Entertainment
 // 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,10 +19,12 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.VisualStudio.Setup.Configuration;
 using Microsoft.Win32;
 
 namespace Sharpmake
@@ -73,15 +75,11 @@ namespace Sharpmake
 
         public static string PathMakeStandard(string path)
         {
-#if __MonoCS__
-            return PathMakeStandard(path, false);
-#else
-            return PathMakeStandard(path, true);
-#endif
+            return PathMakeStandard(path, !Util.IsRunningInMono());
         }
 
         /// <summary>
-        /// Finds the first occurence of directive and returns the 
+        /// Finds the first occurrence of directive and returns the 
         /// requested param value. Ex:
         /// GetTextTemplateDirectiveParam(ttPath, "output", "extension")
         /// will match:
@@ -158,6 +156,7 @@ namespace Sharpmake
         }
 
         public static readonly char[] _pathSeparators = { Util.WindowsSeparator, Util.UnixSeparator };
+        internal static readonly char[] WildcardCharacters = { '*', '?' };
 
         public static void PathSplitFileNameFromPath(string fileFullPath, out string fileName, out string pathName)
         {
@@ -283,7 +282,7 @@ namespace Sharpmake
                 }
 
                 // Important note: Must imcrement _bufferLength at the same time as writing into it as otherwise if
-                // you are stepping in the debugger and ToString() is implicitely called by the debugger this could truncate the string
+                // you are stepping in the debugger and ToString() is implicitly called by the debugger this could truncate the string
                 // before the increment takes place
                 _buffer[_bufferLength++] = value;
             }
@@ -302,7 +301,7 @@ namespace Sharpmake
                 for (int i = substStringIndex; i < endLoop; ++i)
                 {
                     // Important note: Must imcrement _bufferLength at the same time as writing into it as otherwise if
-                    // you are stepping in the debugger and ToString() is implicitely called by the debugger this could truncate the string
+                    // you are stepping in the debugger and ToString() is implicitly called by the debugger this could truncate the string
                     // before the increment takes place
                     char value = str[i];
                     _buffer[_bufferLength++] = value;
@@ -412,10 +411,10 @@ namespace Sharpmake
                         }
                         else
                         {
-#if __MonoCS__
-                            if(index == 0 && currentChar == Path.DirectorySeparatorChar && Path.IsPathRooted(path))
+                            if (Util.IsRunningInMono() &&
+                                index == 0 && currentChar == Path.DirectorySeparatorChar && Path.IsPathRooted(path))
                                 pathHelper.Append(currentChar);
-#endif // __MonoCS__
+
                             if (currentChar != Path.DirectorySeparatorChar || pathHelper.Length > 0)
                                 pathHelper.Append(currentChar);
                         }
@@ -548,12 +547,12 @@ namespace Sharpmake
 
         public static string PathGetAbsolute(string absolutePath, string relativePath)
         {
+            if (string.IsNullOrEmpty(relativePath))
+                return absolutePath;
+
             // Handle environment variables and string that contains more than 1 path
             if (relativePath.StartsWith("$", StringComparison.Ordinal) || relativePath.Count(x => x == ';') > 1)
                 return relativePath;
-
-            if (string.IsNullOrEmpty(relativePath))
-                return absolutePath;
 
             string cleanRelative = SimplifyPath(relativePath);
             if (Path.IsPathRooted(cleanRelative))
@@ -579,6 +578,17 @@ namespace Sharpmake
             {
                 string resolvedPath = Util.PathGetAbsolute(root, Util.PathMakeStandard(path));
                 paths.UpdateValue(path, resolvedPath);
+            }
+        }
+
+        internal static void ResolvePathAndFixCase(string root, ref Strings paths)
+        {
+            List<string> sortedPaths = paths.Values;
+            foreach (string path in sortedPaths)
+            {
+                string resolvedPath = Util.PathGetAbsolute(root, Util.PathMakeStandard(path));
+                string fixedCase = GetProperFilePathCapitalization(resolvedPath);
+                paths.UpdateValue(path, fixedCase);
             }
         }
 
@@ -632,16 +642,18 @@ namespace Sharpmake
             DirectoryInfo dirInfo = fileInfo.Directory;
             GetProperDirectoryCapitalization(dirInfo, null, ref builder);
             string properFileName = fileInfo.Name;
-            foreach (var fsInfo in dirInfo.EnumerateFileSystemInfos())
+            if (dirInfo != null && dirInfo.Exists)
             {
-                if (((fsInfo.Attributes & FileAttributes.Directory) != FileAttributes.Directory)
-                    && string.Compare(fsInfo.Name, fileInfo.Name, StringComparison.OrdinalIgnoreCase) == 0)
+                foreach (var fsInfo in dirInfo.EnumerateFileSystemInfos())
                 {
-                    properFileName = fsInfo.Name;
-                    break;
+                    if (((fsInfo.Attributes & FileAttributes.Directory) != FileAttributes.Directory)
+                        && string.Compare(fsInfo.Name, fileInfo.Name, StringComparison.OrdinalIgnoreCase) == 0)
+                    {
+                        properFileName = fsInfo.Name;
+                        break;
+                    }
                 }
             }
-
             return Path.Combine(builder.ToString(), properFileName);
         }
 
@@ -663,7 +675,8 @@ namespace Sharpmake
                 }
                 else
                 {
-                    pathBuilder.Append(dirInfo.Name);
+                    // Make root drive always uppercase
+                    pathBuilder.Append(dirInfo.Name.ToUpper());
                 }
             }
             s_capitalizedPaths.TryAdd(lowerPath, pathBuilder.ToString());
@@ -699,6 +712,18 @@ namespace Sharpmake
                     pathBuilder.Append(childInfo.Name);
             }
         }
+
+        public static OrderableStrings PathGetCapitalized(OrderableStrings fullPaths)
+        {
+            OrderableStrings result = new OrderableStrings(fullPaths);
+
+            for (int i = 0; i < result.Count; ++i)
+            {
+                result[i] = GetCapitalizedPath(result[i]);
+            }
+            return result;
+        }
+
         public static string GetCapitalizedPath(string path)
         {
             if (CountFakeFiles() > 0)
@@ -853,21 +878,23 @@ namespace Sharpmake
 
         public static void LogWrite(string msg, params object[] args)
         {
-            string message = string.Format(msg, args);
+            string message = args.Length > 0 ? string.Format(msg, args) : msg;
 
             Console.WriteLine(message);
             if (Debugger.IsAttached)
-                Debug.WriteLine(message);
+                Trace.WriteLine(message);
         }
 
         public static List<string> FilesAlternatesAutoCleanupDBSuffixes = new List<string>(); // The alternates db suffixes using by other context
         public static string FilesAutoCleanupDBPath = string.Empty;
         public static string FilesAutoCleanupDBSuffix = string.Empty;   // Current auto-cleanup suffix for the database.
+        internal static bool s_forceFilesCleanup = false;
+        internal static string s_overrideFilesAutoCleanupDBPath;
         public static bool FilesAutoCleanupActive = false;
         public static TimeSpan FilesAutoCleanupDelay = TimeSpan.Zero;
         public static HashSet<string> FilesToBeExplicitlyRemovedFromDB = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
         public static HashSet<string> FilesAutoCleanupIgnoredEndings = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
-        private static readonly string s_filesAutoCleanupDBPrefix = "sharpmakeautocleanupdb";
+        private const string s_filesAutoCleanupDBPrefix = "sharpmakeautocleanupdb";
         private enum DBVersion { Version = 2 };
 
         private static Dictionary<string, DateTime> ReadCleanupDatabase(string databaseFilename)
@@ -887,7 +914,8 @@ namespace Sharpmake
                         {
                             // Read the list of files.
                             IFormatter formatter = new BinaryFormatter();
-                            dbFiles = (Dictionary<string, DateTime>)formatter.Deserialize(readStream);
+                            var tmpDbFiles = (Dictionary<string, DateTime>)formatter.Deserialize(readStream);
+                            dbFiles = tmpDbFiles.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.InvariantCultureIgnoreCase);
                         }
                         else if (version == 1)
                         {
@@ -912,7 +940,10 @@ namespace Sharpmake
 
         private static string GetDatabaseFilename(string dbSuffix)
         {
-            string databaseFilename = Path.Combine(FilesAutoCleanupDBPath, string.Format(@"{0}{1}{2}", s_filesAutoCleanupDBPrefix, dbSuffix, ".bin"));
+            if (!string.IsNullOrWhiteSpace(s_overrideFilesAutoCleanupDBPath))
+                return s_overrideFilesAutoCleanupDBPath;
+
+            string databaseFilename = Path.Combine(FilesAutoCleanupDBPath, $"{s_filesAutoCleanupDBPrefix}{dbSuffix}.bin");
             return databaseFilename;
         }
 
@@ -941,11 +972,11 @@ namespace Sharpmake
         /// </example>
         public static void ExecuteFilesAutoCleanup()
         {
-            if (!FilesAutoCleanupActive)
+            if (!FilesAutoCleanupActive && !s_forceFilesCleanup)
                 return; // Auto cleanup not active. Nothing to do.
 
-            if (!Directory.Exists(FilesAutoCleanupDBPath))
-                throw new Exception(string.Format("Unable to find directory {0} used to store auto-cleanup database. Is proper path set?", FilesAutoCleanupDBPath));
+            if (string.IsNullOrWhiteSpace(s_overrideFilesAutoCleanupDBPath) && !Directory.Exists(FilesAutoCleanupDBPath))
+                throw new Exception($"Unable to find directory {FilesAutoCleanupDBPath} used to store auto-cleanup database. Is proper path set?");
 
             string databaseFilename = GetDatabaseFilename(FilesAutoCleanupDBSuffix);
             Dictionary<string, DateTime> dbFiles = ReadCleanupDatabase(databaseFilename);
@@ -960,7 +991,7 @@ namespace Sharpmake
                     alternateDatabases.Add(alternateDBFiles);
             }
 
-            Dictionary<string, DateTime> newDbFiles = new Dictionary<string, DateTime>(s_writtenFiles);
+            Dictionary<string, DateTime> newDbFiles = new Dictionary<string, DateTime>(s_writtenFiles, StringComparer.InvariantCultureIgnoreCase);
 
             if (dbFiles != null)
             {
@@ -968,6 +999,20 @@ namespace Sharpmake
                 DateTime now = DateTime.Now;
                 foreach (KeyValuePair<string, DateTime> filenameDate in dbFiles)
                 {
+                    if (s_forceFilesCleanup)
+                    {
+                        if (!File.Exists(filenameDate.Key))
+                            continue;
+
+                        LogWrite(@"Force deleting '{0}'", filenameDate.Key);
+                        if (!TryDeleteFile(filenameDate.Key, removeIfReadOnly: true))
+                        {
+                            // Failed to delete the file... Keep it for now... Maybe later we will be able to delete it!
+                            LogWrite(@"Failed to delete '{0}'", filenameDate.Key);
+                        }
+                        continue;
+                    }
+
                     if (newDbFiles.ContainsKey(filenameDate.Key))
                         continue;
 
@@ -1013,31 +1058,45 @@ namespace Sharpmake
                 }
             }
 
-            // Write database.            
-            using (Stream writeStream = new FileStream(databaseFilename, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (BinaryWriter binWriter = new BinaryWriter(writeStream))
+            // Write database if needed
+            if (newDbFiles.Count > 0)
             {
-                // Write version number
-                int version = (int)DBVersion.Version;
-                binWriter.Write(version);
-                binWriter.Flush();
+                using (Stream writeStream = new FileStream(databaseFilename, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (BinaryWriter binWriter = new BinaryWriter(writeStream))
+                {
+                    // Write version number
+                    int version = (int)DBVersion.Version;
+                    binWriter.Write(version);
+                    binWriter.Flush();
 
-                // Write the list of files.
-                IFormatter formatter = new BinaryFormatter();
-                formatter.Serialize(writeStream, newDbFiles);
+                    // Write the list of files.
+                    IFormatter formatter = new BinaryFormatter();
+                    formatter.Serialize(writeStream, newDbFiles);
+                }
+            }
+            else
+            {
+                TryDeleteFile(databaseFilename);
             }
         }
 
         public static string WinFormSubTypesDbPath = string.Empty;
         private static readonly string s_winFormSubTypesDbPrefix = "winformssubtypesdb";
 
-        private static string GetWinFormSubTypeDbPath()
+        public static string GetWinFormSubTypeDbPath()
         {
-            return Path.Combine(WinFormSubTypesDbPath, string.Format(@"{0}{1}", s_winFormSubTypesDbPrefix, ".bin"));
+            return Path.Combine(WinFormSubTypesDbPath, $@"{s_winFormSubTypesDbPrefix}.bin");
         }
 
         public static void SerializeAllCsprojSubTypes(object allCsProjSubTypes)
         {
+            // If DbPath is not specify, do not save C# subtypes information
+            if (string.IsNullOrEmpty(WinFormSubTypesDbPath))
+                return;
+
+            if (!Directory.Exists(WinFormSubTypesDbPath))
+                Directory.CreateDirectory(WinFormSubTypesDbPath);
+
             string winFormSubTypesDbFullPath = GetWinFormSubTypeDbPath();
 
             using (Stream writeStream = new FileStream(winFormSubTypesDbFullPath, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -1069,11 +1128,22 @@ namespace Sharpmake
             return null;
         }
 
-        public static bool TryDeleteFile(string filename)
+        public static bool TryDeleteFile(string filename, bool removeIfReadOnly = false)
         {
             try
             {
-                File.Delete(filename);
+                var fileInfo = new FileInfo(filename);
+                if (fileInfo.Exists)
+                {
+                    if (fileInfo.IsReadOnly)
+                    {
+                        if (!removeIfReadOnly)
+                            return false;
+                        fileInfo.IsReadOnly = false;
+                    }
+                    File.Delete(filename);
+                }
+
                 return true;
             }
             catch (Exception)
@@ -1082,7 +1152,7 @@ namespace Sharpmake
             }
         }
 
-        public static StackFrame GetStackFrameTopMostTypeOf(Type type)
+        public static StackFrame GetStackFrameTopMostTypeOf(Type type, bool allowEmptyFileName = true)
         {
             if (type.IsGenericType)
             {
@@ -1096,7 +1166,8 @@ namespace Sharpmake
             {
                 StackFrame stackFrame = stackTrace.GetFrame(i);
                 MethodBase method = stackFrame.GetMethod();
-                if (method.DeclaringType == type)
+
+                if (method.DeclaringType == type && (allowEmptyFileName || !string.IsNullOrEmpty(stackFrame.GetFileName())))
                     return stackFrame;
             }
             return null;
@@ -1104,7 +1175,12 @@ namespace Sharpmake
 
         public static bool GetStackSourceFileTopMostTypeOf(Type type, out string sourceFile)
         {
-            StackFrame projectStackframe = GetStackFrameTopMostTypeOf(type);
+            // If the sought StackFrame was found, don't return it if its associated file name is unknown.
+            // This could happen in Mono when Sharpmake is invoked with /generateDebugSolution. In that case,
+            // sharpmake_sharpmake's ctor would be looked up and found in the call stack, but the StackFrame would
+            // refer to a null file name. On Windows, however, sharpmake_sharpmake's ctor simply does not appear in
+            // the call stack (as though its call is implicit or omitted)...
+            StackFrame projectStackframe = GetStackFrameTopMostTypeOf(type, allowEmptyFileName: false);
             if (projectStackframe != null)
             {
                 sourceFile = projectStackframe.GetFileName();
@@ -1316,7 +1392,206 @@ namespace Sharpmake
 
         public static string EscapeXml(string value)
         {
-            return System.Security.SecurityElement.Escape(value);
+            // Visual Studio only escapes what it absolutely has to for XML to be valid.
+
+            // escape the < and >
+            value = value.Replace("<", "&lt;").Replace(">", "&gt;").ToString();
+
+            // any & that is not part of an escape needs to be escaped with &amp;
+            value = Regex.Replace(value, @"(\&(?![a-zA-Z0-9#]+;))", "&amp;");
+
+            return value;
+        }
+
+        /**
+        * A simple json serializer.
+        * Does not serialize objects properties using reflection, data must be prepared by the caller.
+        * Supported types : IEnumerable, IDictionnary, string and system value types.
+        */
+        public class JsonSerializer : IDisposable
+        {
+            public const string NullString = "null";
+
+            // Must escape " / \ and control characters.
+            // The website : http://json.org/
+            // The rfc : https://tools.ietf.org/html/rfc8259#section-7
+            public static string EscapeJson(string value, bool quote = false, string nullValue = "null")
+            {
+                if (value == null)
+                    return nullValue;
+
+                StringBuilder sb = new StringBuilder(value.Length);
+
+                if (quote)
+                    sb.Append('"');
+
+                foreach (char c in value)
+                {
+                    switch (c)
+                    {
+                        case '\\':
+                        case '/':
+                        case '"':
+                            sb.Append('\\');
+                            sb.Append(c);
+                            break;
+                        case '\b':
+                            sb.Append("\\b");
+                            break;
+                        case '\f':
+                            sb.Append("\\f");
+                            break;
+                        case '\n':
+                            sb.Append("\\n");
+                            break;
+                        case '\r':
+                            sb.Append("\\r");
+                            break;
+                        case '\t':
+                            sb.Append("\\t");
+                            break;
+                        default:
+                            // Control characters range from 0x0000 to 0x001F (0x0020 is ' '/space)
+                            // The \n \t above also fall into that range, but json accepts them in the friendlier \\n \\t form.
+                            // Others are 'escaped' by printing their code point in hex.
+                            if (c < 0x0020)
+                            {
+                                // The Json format specifies 4 digit hex : \uXXXX
+                                sb.AppendFormat("\\u{0:X4}", (ushort)c);
+                            }
+                            else
+                            {
+                                sb.Append(c);
+                            }
+                            break;
+                    }
+                }
+
+                if (quote)
+                    sb.Append('"');
+
+                return sb.ToString();
+            }
+
+            private static bool IsNumber(object o)
+            {
+                return o is float || o is double || o is decimal ||
+                       o is sbyte || o is short || o is int || o is long ||
+                       o is byte || o is ushort || o is uint || o is ulong;
+            }
+
+            private TextWriter _writer;
+            private ISet<IEnumerable> _parents;
+
+            private string IndentationString => new string('\t', _parents.Count);
+            public bool IsOutputFormatted { get; set; }
+
+            public JsonSerializer(TextWriter writer)
+            {
+                _writer = writer;
+                _parents = new HashSet<IEnumerable>();
+            }
+
+            public void Flush()
+            {
+                _writer.Flush();
+            }
+
+            public void Dispose()
+            {
+                _writer.Dispose();
+            }
+
+            public void Serialize(object value)
+            {
+                if (value == null)
+                {
+                    _writer.Write(NullString);
+                }
+                else if (value is string || value is char)
+                {
+                    // String is IEnumerable, avoid serializing it as an array!
+                    _writer.Write(EscapeJson(value.ToString(), quote: true));
+                }
+                else if (value is IDictionary)
+                {
+                    // IDictionary is IEnumerable, avoid serializing it as an array!
+                    SerializeDictionary((IDictionary)value);
+                }
+                else if (value is IEnumerable)
+                {
+                    SerializeArray((IEnumerable)value);
+                }
+                else if (value is bool || IsNumber(value))
+                {
+                    // This *should* be safe without Escaping
+                    _writer.Write(EscapeJson(value.ToString().ToLower()));
+                }
+                else
+                {
+                    throw new ArgumentException(string.Format("Unsupported type '{0}'", value.GetType()));
+                }
+            }
+
+            private void SerializeArray(IEnumerable array)
+            {
+                SerializeSequence<object>(array, Tuple.Create('[', ']'), Serialize);
+            }
+
+            private void SerializeDictionary(IDictionary dict)
+            {
+                SerializeSequence<DictionaryEntry>(dict, Tuple.Create('{', '}'), e =>
+                {
+                    if (!(e.Key is string))
+                        throw new InvalidDataException(string.Format("Dictionary key '{0}' is not a string.", e.Key));
+
+                    Serialize(e.Key);
+                    _writer.Write(':');
+                    Serialize(e.Value);
+                });
+            }
+
+            private void SerializeSequence<T>(IEnumerable sequence, Tuple<char, char> delimiters, Action<T> serializeElement)
+            {
+                if (_parents.Contains(sequence))
+                    throw new InvalidDataException("Cycle detected during json serialization.");
+
+                _writer.Write(delimiters.Item1);
+                _parents.Add(sequence);
+
+                // IDictionary returns different enumerators depending on which interface GetEnumerator called from.
+                // IDictionary.GetEnumerator enumerates DictionaryEntry 
+                // IEnumerable.GetEnumerator enumerates KeyValuePair<>
+                bool first = true;
+                IEnumerator enumerator = (sequence as IDictionary)?.GetEnumerator() ?? sequence.GetEnumerator();
+                while (enumerator.MoveNext())
+                {
+                    if (!first)
+                        _writer.Write(',');
+
+                    // Write each element on its own line
+                    if (IsOutputFormatted)
+                    {
+                        _writer.WriteLine();
+                        _writer.Write(IndentationString);
+                    }
+
+                    serializeElement((T)enumerator.Current);
+
+                    first = false;
+                }
+
+                _parents.Remove(sequence);
+
+                // Extra newline after the last element, puts the closing delimiter on its own line
+                if (IsOutputFormatted)
+                {
+                    _writer.WriteLine();
+                    _writer.Write(IndentationString);
+                }
+
+                _writer.Write(delimiters.Item2);
+            }
         }
 
         public static bool CreateSymbolicLink(string source, string target, bool isDirectory)
@@ -1335,7 +1610,13 @@ namespace Sharpmake
                     Directory.Delete(source);
                 }
 
-                success = CreateSymbolicLink(source, target, isDirectory ? 1 : 0);
+                int releaseId = int.Parse(GetRegistryLocalMachineSubKeyValue(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "ReleaseId", "0"));
+
+                int flags = isDirectory ? SYMBOLIC_LINK_FLAG_DIRECTORY : SYMBOLIC_LINK_FLAG_FILE;
+                if (releaseId >= 1703) // Verify that the Windows build is equal or above 1703, as SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE was introduced at that version. Using it on older version will cause an error 87 and symlinks won't be created
+                    flags |= SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+
+                success = CreateSymbolicLink(source, target, flags);
             }
             catch { }
             return success;
@@ -1343,6 +1624,9 @@ namespace Sharpmake
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll")]
         private static extern bool CreateSymbolicLink(string lpSymlinkFileName, string lpTargetFileName, int dwFlags);
+        private const int SYMBOLIC_LINK_FLAG_FILE = 0x0;
+        private const int SYMBOLIC_LINK_FLAG_DIRECTORY = 0x1;
+        private const int SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE = 0x2;
 
         public static bool IsSymbolicLink(string path)
         {
@@ -1431,6 +1715,208 @@ namespace Sharpmake
             return !string.IsNullOrEmpty(key);
         }
 
+        public static string GetDefaultLLVMInstallDir()
+        {
+            string registryKeyString = string.Format(
+                @"SOFTWARE{0}\LLVM\LLVM",
+                Environment.Is64BitProcess ? @"\Wow6432Node" : string.Empty
+            );
+
+            return GetRegistryLocalMachineSubKeyValue(registryKeyString, null, @"C:\Program Files\LLVM"); // null to get default
+        }
+
+        public static string GetClangVersionFromLLVMInstallDir(string llvmInstallDir)
+        {
+            if (!DirectoryExists(llvmInstallDir))
+                throw new Error($"Couldn't find {llvmInstallDir} to lookup version");
+
+            string libDir = Path.Combine(llvmInstallDir, "lib", "clang");
+
+            var versionFolder = DirectoryGetDirectories(libDir);
+            if (versionFolder.Length == 0)
+                throw new Error($"Couldn't find a version number folder for clang in {llvmInstallDir}");
+
+            if (versionFolder.Length != 1)
+                throw new NotImplementedException($"More than one version folder found in {llvmInstallDir}, the code doesn't handle that (yet).");
+
+            return Path.GetFileName(versionFolder[0]);
+        }
+
+        public class VsInstallation
+        {
+            public VsInstallation(ISetupInstance2 setupInstance)
+            {
+                Version = new Version(setupInstance.GetInstallationVersion());
+
+                var catalog = setupInstance as ISetupInstanceCatalog;
+                IsPrerelease = catalog?.IsPrerelease() ?? false;
+
+                InstallationPath = setupInstance.GetInstallationPath();
+
+                if ((setupInstance.GetState() & InstanceState.Registered) == InstanceState.Registered)
+                {
+                    ProductID = setupInstance.GetProduct().GetId();
+                    Components = (from package in setupInstance.GetPackages()
+                                  where string.Equals(package.GetType(), "Component", StringComparison.OrdinalIgnoreCase)
+                                  select package.GetId()).ToArray();
+                    Workloads = (from package in setupInstance.GetPackages()
+                                 where string.Equals(package.GetType(), "Workload", StringComparison.OrdinalIgnoreCase)
+                                 select package.GetId()).ToArray();
+                }
+            }
+
+            public Version Version { get; }
+
+            public string InstallationPath { get; }
+
+            public bool IsPrerelease { get; }
+
+            /// <summary>
+            /// The full list of products can be found here: https://docs.microsoft.com/en-us/visualstudio/install/workload-and-component-ids
+            /// </summary>
+            public string ProductID { get; } = null;
+
+            /// <summary>
+            /// This can be used to check and limit by specific installed workloads.
+            /// 
+            /// What is a Workload?
+            /// In the VS installer, a 'Workload' is a section that you see in the UI such as 'Desktop development with C++' or '.NET desktop development'.
+            /// 
+            /// The full list of products is here: https://docs.microsoft.com/en-us/visualstudio/install/workload-and-component-ids
+            /// 
+            /// For each product, clicking it will bring up a page of all of the possible Workloads.
+            /// For example: https://docs.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-professional
+            /// </summary>
+            public string[] Workloads { get; } = new string[] { };
+
+            /// <summary>
+            /// This can be used to check and limit by specific installed components.
+            /// What is a Component?
+            /// In the Visual Studio Installer, the 'Components' are individual components associated with each Workload (and some just on the side), 
+            /// that you can see in the Summary on the right.
+            /// Each workflow contains a number of mandatory components, but also a list of optional ones.
+            /// An example would be: 'NuGet package manager' or 'C++/CLI support'.
+            /// 
+            /// The full list of products is here: https://docs.microsoft.com/en-us/visualstudio/install/workload-and-component-ids
+            /// 
+            /// For each product, clicking it will bring up a page of all of the possible Workloads.
+            /// For example: https://docs.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-professional
+            /// </summary>
+            public string[] Components { get; } = new string[] { };
+        }
+
+        public static List<VsInstallation> s_VisualStudioInstallations { get; private set; } = null;
+
+        private static object s_vsInstallScanLock = new object();
+        public static List<VsInstallation> GetVisualStudioInstalledVersions()
+        {
+            lock (s_vsInstallScanLock)
+            {
+                if (s_VisualStudioInstallations != null)
+                    return s_VisualStudioInstallations;
+
+                var installations = new List<VsInstallation>();
+
+                try
+                {
+                    var query = (ISetupConfiguration2)new SetupConfiguration();
+                    var e = query.EnumAllInstances();
+
+                    int fetched;
+                    var instances = new ISetupInstance[1];
+                    do
+                    {
+                        e.Next(1, instances, out fetched);
+                        if (fetched > 0)
+                        {
+                            var setupInstance2 = (ISetupInstance2)instances[0];
+                            if ((setupInstance2.GetState() & InstanceState.Local) == InstanceState.Local)
+                            {
+                                installations.Add(new VsInstallation(setupInstance2));
+                            }
+                        }
+                    } while (fetched > 0);
+                }
+                catch (System.Runtime.InteropServices.COMException)
+                {
+                    // Ignore
+                }
+
+                s_VisualStudioInstallations = installations;
+                return s_VisualStudioInstallations;
+            }
+        }
+
+        /// <summary>
+        /// The supported visual studio products, in order by priority in which Sharpmake will choose them.
+        /// We want to block products like the standalone Team Explorer, which is in the Visual Studio
+        /// family yet isn't a variant of Visual Studio proper.
+        ///
+        /// The list of Product IDs can be found here: https://docs.microsoft.com/en-us/visualstudio/install/workload-and-component-ids
+        /// </summary>
+        private static readonly string[] s_supportedVisualStudioProducts = {
+            "Microsoft.VisualStudio.Product.Enterprise",
+            "Microsoft.VisualStudio.Product.Professional",
+            "Microsoft.VisualStudio.Product.Community",
+            "Microsoft.VisualStudio.Product.BuildTools"
+        };
+
+        private class VisualStudioVersionSorter : IComparer<VsInstallation>
+        {
+            public int Compare(VsInstallation x, VsInstallation y)
+            {
+                // Order by Product ID priority (the order they appear in s_supportedVisualStudioProducts).
+                int xProductIndex = s_supportedVisualStudioProducts.IndexOf(x.ProductID, StringComparison.OrdinalIgnoreCase);
+                int yProductIndex = s_supportedVisualStudioProducts.IndexOf(y.ProductID, StringComparison.OrdinalIgnoreCase);
+
+                int versionComparison = xProductIndex.CompareTo(yProductIndex);
+                if (versionComparison != 0)
+                    return versionComparison;
+
+                // If they have the same Product ID, then compare their versions and return the highest one.
+                return y.Version.CompareTo(x.Version); // Swap x and y so that the comparison is inversed (higher values first).
+            }
+        }
+
+        public static List<VsInstallation> GetVisualStudioInstallationsFromQuery(
+            DevEnv visualVersion,
+            bool allowPrereleaseVersions = false,
+            string[] requiredComponents = null,
+            string[] requiredWorkloads = null
+        )
+        {
+            // Fetch all installed products
+            var installedVersions = GetVisualStudioInstalledVersions();
+
+            // Limit to our major version + the supported products, and order by priority.
+            int majorVersion = visualVersion.GetVisualMajorVersion();
+
+            var candidates = installedVersions.Where(i =>
+                    i.Version.Major == majorVersion
+                    && (!i.IsPrerelease || allowPrereleaseVersions)
+                    && s_supportedVisualStudioProducts.Contains(i.ProductID, StringComparer.OrdinalIgnoreCase)
+                    && (requiredComponents == null || !requiredComponents.Except(i.Components).Any())
+                    && (requiredWorkloads == null || !requiredWorkloads.Except(i.Workloads).Any()))
+                .OrderBy(x => x, new VisualStudioVersionSorter()).ToList();
+
+            return candidates;
+        }
+
+        public static string GetVisualStudioInstallPathFromQuery(
+            DevEnv visualVersion,
+            bool allowPrereleaseVersions = false,
+            string[] requiredComponents = null,
+            string[] requiredWorkloads = null
+        )
+        {
+            if (IsRunningInMono())
+                return null;
+
+            var vsInstallations = GetVisualStudioInstallationsFromQuery(visualVersion, allowPrereleaseVersions, requiredComponents, requiredWorkloads);
+            VsInstallation priorityInstallation = vsInstallations.FirstOrDefault();
+            return priorityInstallation != null ? SimplifyPath(priorityInstallation.InstallationPath) : null;
+        }
+
         /// <summary>
         /// Generate a pseudo Guid base on relative path from the Project GuidReference path to the generated files
         /// Need to do it that way because many vcproj may be generated from the same Project.
@@ -1444,9 +1930,10 @@ namespace Sharpmake
         public static string GetDotNetTargetString(DotNetFramework framework)
         {
             string version = framework.ToVersionString();
-            return string.IsNullOrEmpty(version)
-                ? String.Empty
-                : String.Format("v{0}", version);
+            if (string.IsNullOrEmpty(version))
+                return string.Empty;
+
+            return string.Format("v{0}", version);
         }
 
         public static string GetToolVersionString(DevEnv env, DotNetFramework desiredFramework)
@@ -1463,6 +1950,7 @@ namespace Sharpmake
                     return DotNetFramework.v4_5.ToVersionString();
                 case DevEnv.vs2015:
                 case DevEnv.vs2017:
+                case DevEnv.vs2019:
                     return env.GetVisualProjectToolsVersionString();
                 case DevEnv.xcode4ios:
                     throw new NotSupportedException("XCode does not support Tool Version. ");
@@ -1507,6 +1995,8 @@ namespace Sharpmake
                 extension = ".csproj";
             else if (conf.Project is PythonProject)
                 extension = ".pyproj";
+            else if (conf.Project is AndroidPackageProject)
+                extension = ".androidproj";
             else
             {
                 switch (conf.Target.GetFragment<DevEnv>())
@@ -1516,6 +2006,7 @@ namespace Sharpmake
                     case DevEnv.vs2013:
                     case DevEnv.vs2015:
                     case DevEnv.vs2017:
+                    case DevEnv.vs2019:
                         {
                             extension = ".vcxproj";
                         }
@@ -1539,7 +2030,6 @@ namespace Sharpmake
 
         public static string GetAppxManifestFileName(Project.Configuration conf)
         {
-            Debug.Assert(conf.NeedsAppxManifestFile);
             return Path.GetFullPath(PathMakeStandard(conf.AppxManifestFilePath));
         }
 
@@ -1631,7 +2121,7 @@ namespace Sharpmake
             return PlatformRegistry.Query<IPlatformDescriptor>(platform)?.SimplePlatformString ?? platform.ToString();
         }
 
-        public static string GetPlatformString(Platform platform, Project project, bool isForSolution = false)
+        public static string GetPlatformString(Platform platform, Project project, ITarget target, bool isForSolution = false)
         {
             if (project is CSharpProject)
             {
@@ -1649,7 +2139,13 @@ namespace Sharpmake
                 return isForSolution ? "Any CPU" : "AnyCPU";
             }
 
-            return GetSimplePlatformString(platform);
+            return PlatformRegistry.Query<IPlatformDescriptor>(platform)?.GetPlatformString(target) ?? platform.ToString();
+        }
+
+        [Obsolete("GetPlatformString() now requires a `target` parameter.")]
+        public static string GetPlatformString(Platform platform, Project project, bool isForSolution = false)
+        {
+            return GetPlatformString(platform, project, null, isForSolution);
         }
 
         public static string CallerInfoTag = "CALLER_INFO: ";
@@ -1664,7 +2160,7 @@ namespace Sharpmake
         /// <param name="callerInfo1"></param>
         /// <param name="callerInfo2"></param>
         /// <returns>
-        /// 1.if they are both refering to file edited by sharpmake user (.sharpmake): concatenation of both separated by a line return
+        /// 1.if they are both referring to file edited by sharpmake user (.sharpmake): concatenation of both separated by a line return
         /// 2.if only callerInfo2 refer to file edited by sharpmake user (.sharpmake): callerInfo2
         /// 3.otherwise: callerInfo1
         /// </returns>
@@ -1682,13 +2178,20 @@ namespace Sharpmake
 
         public static MemoryStream RemoveLineTags(MemoryStream inputMemoryStream, string removeLineTag)
         {
+            //
+            // TODO: This method should be deprecated and/or removed.
+            //       Use FileGenerator or a derived class to build your output files, and call its
+            //       RemoveTaggedLines method.
+            //
+
+
             // remove all line that contain RemoveLineTag
             inputMemoryStream.Seek(0, SeekOrigin.Begin);
 
             StreamReader streamReader = new StreamReader(inputMemoryStream);
 
             MemoryStream cleanMemoryStream = new MemoryStream((int)inputMemoryStream.Length);
-            StreamWriter cleanWriter = new StreamWriter(cleanMemoryStream);
+            StreamWriter cleanWriter = new StreamWriter(cleanMemoryStream, new UTF8Encoding(true));
 
             string readline = streamReader.ReadLine();
             while (readline != null)
@@ -1699,6 +2202,13 @@ namespace Sharpmake
             }
 
             cleanWriter.Flush();
+
+            // removes the end of line from the last WriteLine to be consistent with VS project
+            // output; this will stop the pointless "Do you want to refresh?" prompts because of a
+            // new line.
+            if (cleanMemoryStream.Length != 0)
+                cleanMemoryStream.SetLength(cleanMemoryStream.Length - Environment.NewLine.Length);
+
             return cleanMemoryStream;
         }
 
@@ -1715,15 +2225,16 @@ namespace Sharpmake
         /// <returns></returns>
         public static string ReplaceHeadPath(this string fullInputPath, string inputHeadPath, string replacementHeadPath)
         {
-            if (!string.IsNullOrEmpty(inputHeadPath) &&
-                inputHeadPath[inputHeadPath.Length - 1] != Path.DirectorySeparatorChar)
-            {
-                inputHeadPath += Path.DirectorySeparatorChar;
-            }
+            // Normalize paths before comparing and combining them, to prevent false mismatch between '\\' and '/'.
+            fullInputPath = Util.PathMakeStandard(fullInputPath, false);
+            inputHeadPath = Util.PathMakeStandard(inputHeadPath, false);
+            replacementHeadPath = Util.PathMakeStandard(replacementHeadPath, false);
+
+            inputHeadPath = EnsureTrailingSeparator(inputHeadPath);
 
             if (!fullInputPath.StartsWith(inputHeadPath, StringComparison.OrdinalIgnoreCase))
             {
-                throw new ArgumentException("The subpath to be replaced is not found at the beginning of the input path.");
+                throw new ArgumentException($"The subpath to be replaced '{inputHeadPath}'\n is not found at the beginning of the input path '{fullInputPath}'.");
             }
 
             var pathRelativeToOutput = fullInputPath.Substring(inputHeadPath.Length);
@@ -1746,7 +2257,13 @@ namespace Sharpmake
         }
 
         private static ConcurrentDictionary<Tuple<string, string>, string> s_registryCache = new ConcurrentDictionary<Tuple<string, string>, string>();
+
         public static string GetRegistryLocalMachineSubKeyValue(string registrySubKey, string value, string fallbackValue)
+        {
+            return GetRegistryLocalMachineSubKeyValue(registrySubKey, value, fallbackValue, enableLog: true);
+        }
+
+        public static string GetRegistryLocalMachineSubKeyValue(string registrySubKey, string value, string fallbackValue, bool enableLog)
         {
             var subKeyValueTuple = new Tuple<string, string>(registrySubKey, value);
             string registryValue;
@@ -1757,15 +2274,21 @@ namespace Sharpmake
             try
             {
                 using (RegistryKey localMachineKey = Registry.LocalMachine.OpenSubKey(registrySubKey))
-                    key = (localMachineKey != null) ? (string)localMachineKey.GetValue(value) : null;
+                {
+                    if (localMachineKey != null)
+                    {
+                        key = (string)localMachineKey.GetValue(value);
+                        if (enableLog && string.IsNullOrEmpty(key))
+                            LogWrite("Value '{0}' under registry subKey '{1}' is not set, fallback to default: '{2}'", value ?? "(Default)", registrySubKey, fallbackValue);
+                    }
+                    else if (enableLog)
+                        LogWrite("Registry subKey '{0}' is not found, fallback to default for value '{1}': '{2}'", registrySubKey, value ?? "(Default)", fallbackValue);
+                }
             }
             catch { }
 
             if (string.IsNullOrEmpty(key))
-            {
-                LogWrite("Registry subKey (" + registrySubKey + ") or value under it (" + value + ") is not set, fallback to default: " + fallbackValue);
                 key = fallbackValue;
-            }
 
             s_registryCache.TryAdd(subKeyValueTuple, key);
 
@@ -1776,16 +2299,25 @@ namespace Sharpmake
         {
             private readonly Stopwatch _stopWatch;
             private readonly Action<long> _disposeAction;
+            private readonly long _minThresholdMs;
 
             public StopwatchProfiler(Action<long> disposeAction)
+                : this(disposeAction, 0)
+            {
+            }
+
+            public StopwatchProfiler(Action<long> disposeAction, long minThresholdMs)
             {
                 _disposeAction = disposeAction;
                 _stopWatch = Stopwatch.StartNew();
+                _minThresholdMs = minThresholdMs;
             }
 
             public void Dispose()
             {
-                _disposeAction(_stopWatch.ElapsedMilliseconds);
+                long elapsed = _stopWatch.ElapsedMilliseconds;
+                if (elapsed > _minThresholdMs)
+                    _disposeAction(elapsed);
             }
         }
 
@@ -1819,5 +2351,9 @@ namespace Sharpmake
                 return result;
             }
         }
+
+        // http://www.mono-project.com/docs/faq/technical/#how-can-i-detect-if-am-running-in-mono
+        private static readonly bool s_monoRuntimeExists = (Type.GetType("Mono.Runtime") != null);
+        public static bool IsRunningInMono() => s_monoRuntimeExists;
     }
 }

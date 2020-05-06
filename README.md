@@ -1,5 +1,6 @@
 # Sharpmake
 
+[![Build status](https://ci.appveyor.com/api/projects/status/5y9eug3x9j078x6i?svg=true)](https://ci.appveyor.com/project/belkiss/sharpmake-36817)
 
 ## Introduction
 Sharpmake is a generator for Visual Studio projects and solutions. It is
@@ -71,6 +72,15 @@ automatically overwrite the reference output files.
 
 Naturally, we also recommend that you put your own tests after fixing a bug or
 adding a feature to help us avoid regressions.
+
+Functional tests are generating test projects and building them to test
+functionality
+
+used toolset for functional tests:
+
+tools\FastBuild\FBuild.exe - v0.97. http://www.fastbuild.org
+
+
 
 ### Additional Platforms
 If you want to add support for an additional platform, please make sure that

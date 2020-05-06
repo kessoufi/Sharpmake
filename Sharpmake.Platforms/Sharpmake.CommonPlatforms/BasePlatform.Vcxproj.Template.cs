@@ -18,6 +18,7 @@ namespace Sharpmake
         private const string _projectConfigurationsCompileTemplate =
             @"    <ClCompile>
       <PrecompiledHeader>[options.UsePrecompiledHeader]</PrecompiledHeader>
+      <CompileAsWinRT>[options.CompileAsWinRT]</CompileAsWinRT>
       <WarningLevel>[options.WarningLevel]</WarningLevel>
       <Optimization>[options.Optimization]</Optimization>
       <PreprocessorDefinitions>[options.PreprocessorDefinitions];%(PreprocessorDefinitions);$(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -27,6 +28,7 @@ namespace Sharpmake
       <CompileAsManaged>[clrSupport]</CompileAsManaged>
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <TreatWarningAsError>[options.TreatWarningAsError]</TreatWarningAsError>
+      <DiagnosticsFormat>[options.DiagnosticsFormat]</DiagnosticsFormat>
       <MultiProcessorCompilation>[options.MultiProcessorCompilation]</MultiProcessorCompilation>
       <UseUnicodeForAssemblerListing>false</UseUnicodeForAssemblerListing>
       <InlineFunctionExpansion>[options.InlineFunctionExpansion]</InlineFunctionExpansion>
@@ -38,8 +40,8 @@ namespace Sharpmake
       <UndefineAllPreprocessorDefinitions>false</UndefineAllPreprocessorDefinitions>
       <IgnoreStandardIncludePath>[options.IgnoreStandardIncludePath]</IgnoreStandardIncludePath>
       <PreprocessToFile>[options.GeneratePreprocessedFile]</PreprocessToFile>
-      <PreprocessSuppressLineNumbers>[options.KeepComments]</PreprocessSuppressLineNumbers>
-      <PreprocessKeepComments>false</PreprocessKeepComments>
+      <PreprocessSuppressLineNumbers>[options.PreprocessSuppressLineNumbers]</PreprocessSuppressLineNumbers>
+      <PreprocessKeepComments>[options.KeepComments]</PreprocessKeepComments>
       <StringPooling>[options.StringPooling]</StringPooling>
       <MinimalRebuild>[options.MinimalRebuild]</MinimalRebuild>
       <ExceptionHandling>[options.ExceptionHandling]</ExceptionHandling>
@@ -53,21 +55,22 @@ namespace Sharpmake
       <FloatingPointModel>[options.FloatingPointModel]</FloatingPointModel>
       <FloatingPointExceptions>[options.FloatingPointExceptions]</FloatingPointExceptions>
       <CreateHotpatchableImage>false</CreateHotpatchableImage>
+      <ConformanceMode>[options.ConformanceMode]</ConformanceMode>
       <DisableLanguageExtensions>[options.DisableLanguageExtensions]</DisableLanguageExtensions>
       <TreatWChar_tAsBuiltInType>[options.TreatWChar_tAsBuiltInType]</TreatWChar_tAsBuiltInType>
+      <RemoveUnreferencedCodeData>[options.RemoveUnreferencedCodeData]</RemoveUnreferencedCodeData>
       <ForceConformanceInForLoopScope>[options.ForceConformanceInForLoopScope]</ForceConformanceInForLoopScope>
       <RuntimeTypeInfo>[options.RuntimeTypeInfo]</RuntimeTypeInfo>
       <OpenMPSupport>[options.OpenMP]</OpenMPSupport>
+      <LanguageStandard>[options.LanguageStandard]</LanguageStandard>
       <ExpandAttributedSource>false</ExpandAttributedSource>
       <AssemblerOutput>NoListing</AssemblerOutput>
       <GenerateXMLDocumentationFiles>[options.GenerateXMLDocumentation]</GenerateXMLDocumentationFiles>
       <BrowseInformation>false</BrowseInformation>
       <CallingConvention>[options.CallingConvention]</CallingConvention>
       <CompileAs>Default</CompileAs>
-      <DisableSpecificWarnings>[options.DisableSpecificWarnings]
-      </DisableSpecificWarnings>
-      <UndefinePreprocessorDefinitions>[options.UndefinePreprocessorDefinitions]
-      </UndefinePreprocessorDefinitions>
+      <DisableSpecificWarnings>[options.DisableSpecificWarnings]</DisableSpecificWarnings>
+      <UndefinePreprocessorDefinitions>[options.UndefinePreprocessorDefinitions]</UndefinePreprocessorDefinitions>
       <AdditionalOptions>[options.AdditionalCompilerOptions]</AdditionalOptions>
       <PrecompiledHeaderFile>[options.PrecompiledHeaderThrough]</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>[options.PrecompiledHeaderFile]</PrecompiledHeaderOutputFile>
@@ -75,13 +78,15 @@ namespace Sharpmake
       <RuntimeLibrary>[options.RuntimeLibrary]</RuntimeLibrary>
       <ShowIncludes>[options.ShowIncludes]</ShowIncludes>
       <ForcedIncludeFiles>[options.ForcedIncludeFiles]</ForcedIncludeFiles>
+      <ForcedUsingFiles>[options.ForcedUsingFiles]</ForcedUsingFiles>
+      <SupportJustMyCode>[options.SupportJustMyCode]</SupportJustMyCode>
     </ClCompile>
 ";
 
         private const string _projectConfigurationsLinkTemplate =
             @"    <Link>
       <SubSystem>[options.SubSystem]</SubSystem>
-      <GenerateDebugInformation>[options.GenerateDebugInformation]</GenerateDebugInformation>
+      <GenerateDebugInformation>[options.LinkerGenerateDebugInformation]</GenerateDebugInformation>
       <FullProgramDatabaseFile>[options.FullProgramDatabaseFile]</FullProgramDatabaseFile>
       <OutputFile>[options.OutputFile]</OutputFile>
       <ShowProgress>[options.ShowProgress]</ShowProgress>
@@ -110,47 +115,48 @@ namespace Sharpmake
       <CLRImageType>Default</CLRImageType>
       <LinkErrorReporting>PromptImmediately</LinkErrorReporting>
       <AdditionalOptions>[options.AdditionalLinkerOptions]</AdditionalOptions>
-      <AdditionalDependencies>[options.AdditionalDependencies];%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>[options.AdditionalDependencies]</AdditionalDependencies>
       <SuppressStartupBanner>[options.SuppressStartupBanner]</SuppressStartupBanner>
       <IgnoreAllDefaultLibraries>[options.IgnoreAllDefaultLibraries]</IgnoreAllDefaultLibraries>
-      <IgnoreSpecificDefaultLibraries>[options.IgnoreDefaultLibraryNames]
-      </IgnoreSpecificDefaultLibraries>
+      <IgnoreSpecificDefaultLibraries>[options.IgnoreDefaultLibraryNames]</IgnoreSpecificDefaultLibraries>
       <AssemblyDebug>[options.AssemblyDebug]</AssemblyDebug>
       <HeapReserveSize>[options.HeapReserveSize]</HeapReserveSize>
       <HeapCommitSize>[options.HeapCommitSize]</HeapCommitSize>
       <StackReserveSize>[options.StackReserveSize]</StackReserveSize>
       <StackCommitSize>[options.StackCommitSize]</StackCommitSize>
-      <LargeAddressAware>true</LargeAddressAware>
+      <LargeAddressAware>[options.LargeAddressAware]</LargeAddressAware>
       <MapFileName>[options.MapFileName]</MapFileName>
       <ImportLibrary>[options.ImportLibrary]</ImportLibrary>
       <FunctionOrder>[options.FunctionOrder]</FunctionOrder>
+      <ForceFileOutput>[options.ForceFileOutput]</ForceFileOutput>
       <ModuleDefinitionFile>[options.ModuleDefinitionFile]</ModuleDefinitionFile>
       <DelayLoadDLLs>[options.DelayLoadedDLLs]</DelayLoadDLLs>
       <BaseAddress>[options.BaseAddress]</BaseAddress>
       <UACExecutionLevel>[options.UACExecutionLevel]</UACExecutionLevel>
+      <AllowIsolation>[options.AllowIsolation]</AllowIsolation>
+      <GenerateWindowsMetadata>[options.GenerateWindowsMetadata]</GenerateWindowsMetadata>
+      <WindowsMetadataFile>[options.WindowsMetadataFile]</WindowsMetadataFile>
+      <TreatLinkerWarningAsErrors>[options.TreatLinkerWarningAsErrors]</TreatLinkerWarningAsErrors>
     </Link>
 ";
 
         private const string _projectConfigurationsStaticLinkTemplate =
             @"    <Link>
-      <GenerateDebugInformation>[options.GenerateDebugInformation]</GenerateDebugInformation>
+      <GenerateDebugInformation>[options.LinkerGenerateDebugInformation]</GenerateDebugInformation>
       <FullProgramDatabaseFile>[options.FullProgramDatabaseFile]</FullProgramDatabaseFile>
       <EnableCOMDATFolding>[options.EnableCOMDATFolding]</EnableCOMDATFolding>
       <OptimizeReferences>[options.OptimizeReferences]</OptimizeReferences>
+      <TreatLinkerWarningAsErrors>[options.TreatLinkerWarningAsErrors]</TreatLinkerWarningAsErrors>
     </Link>
     <Lib>
       <TargetMachine>[options.TargetMachine]</TargetMachine>
-    </Lib>
-    <Lib>
-      <SubSystem>
-      </SubSystem>
-    </Lib>
-    <Lib>
+      <SubSystem/>
       <LinkTimeCodeGeneration>[options.LinkTimeCodeGeneration]</LinkTimeCodeGeneration>
-      <AdditionalOptions>[options.AdditionalLinkerOptions]</AdditionalOptions>
+      <AdditionalOptions>[options.AdditionalLibrarianOptions]</AdditionalOptions>
+      <TreatLibWarningAsErrors>[options.TreatLibWarningAsErrors]</TreatLibWarningAsErrors>
       <OutputFile>[options.OutputFile]</OutputFile>
       <AdditionalLibraryDirectories>[options.AdditionalLibraryDirectories]</AdditionalLibraryDirectories>
-      <AdditionalDependencies>[options.AdditionalDependencies];%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>[options.AdditionalDependencies]</AdditionalDependencies>
     </Lib>
 ";
 
@@ -166,8 +172,8 @@ namespace Sharpmake
             @"  <PropertyGroup Condition=""'$(Configuration)|$(Platform)'=='[conf.Name]|[platformName]'"" Label=""Configuration"">
     <ConfigurationType>[options.ConfigurationType]</ConfigurationType>
     <UseDebugLibraries>[options.UseDebugLibraries]</UseDebugLibraries>
-    <_IsNativeEnvironment>[options.NativeEnvironmentVS2012]</_IsNativeEnvironment>
-    <UseNativeEnvironment>[options.NativeEnvironmentVS2013]</UseNativeEnvironment>
+    <PreferredToolArchitecture>[options.PreferredToolArchitecture]</PreferredToolArchitecture>
+    <_IsNativeEnvironment>[options._IsNativeEnvironment]</_IsNativeEnvironment>
     <CharacterSet>[options.CharacterSet]</CharacterSet>
     <UseOfMfc>[options.UseOfMfc]</UseOfMfc>
     <CLRSupport>[clrSupport]</CLRSupport>
@@ -176,6 +182,7 @@ namespace Sharpmake
     <TrackFileAccess>[options.TrackFileAccess]</TrackFileAccess>
     <CLRSupport>[options.CLRSupport]</CLRSupport>
     <WindowsTargetPlatformVersion>[options.WindowsTargetPlatformVersion]</WindowsTargetPlatformVersion>
+    <SpectreMitigation>[options.SpectreMitigation]</SpectreMitigation>
   </PropertyGroup>
 ";
 
@@ -201,10 +208,25 @@ namespace Sharpmake
     <LibraryPath>[options.LibraryPath]</LibraryPath>
     <ExcludePath>[options.ExcludePath]</ExcludePath>
     <DisableFastUpToDateCheck>[options.DisableFastUpToDateCheck]</DisableFastUpToDateCheck>
+    <EnableManagedIncrementalBuild>[options.EnableManagedIncrementalBuild]</EnableManagedIncrementalBuild>
+    <UseClangCl>[options.UseClangCl]</UseClangCl>
+    <UseLldLink>[options.UseLldLink]</UseLldLink>
   </PropertyGroup>
 ";
 
-        // Notes: 
+        private const string _windowsSDKOverridesBegin =
+            @"  <PropertyGroup Label=""Globals"">
+    <UCRTContentRoot>[UCRTContentRoot]</UCRTContentRoot>
+    <UniversalCRTSdkDir_10>[UniversalCRTSdkDir_10]</UniversalCRTSdkDir_10>
+    <[windowsSdkDirKey]>[windowsSdkDirValue]</[windowsSdkDirKey]>
+    <WindowsSdkDir>$([windowsSdkDirKey])</WindowsSdkDir>
+    <WindowsTargetPlatformVersion>[targetPlatformVersion]</WindowsTargetPlatformVersion>
+";
+        private const string _windowsSDKOverridesEnd =
+            @"  </PropertyGroup>
+";
+
+        // Notes:
         // Clean:
         // Visual Studio automatically cleans most files from the intermediate directory as soon as the clean command is active. However, it doesn't
         // clean them all, so we manually delete everything!
@@ -236,6 +258,19 @@ del ""[options.OutputDirectory]\[conf.TargetFileFullName].pdb"" >NUL 2>NUL</NMak
     <NMakePreprocessorDefinitions>[options.PreprocessorDefinitions]</NMakePreprocessorDefinitions>
     <NMakeIncludeSearchPath>[options.AdditionalIncludeDirectories]</NMakeIncludeSearchPath>
     <TargetFileName>[options.OutputFileName].exe</TargetFileName>
+  </PropertyGroup>
+";
+
+        private const string _projectConfigurationsCustomMakefile =
+            @"  <PropertyGroup Condition=""'$(Configuration)|$(Platform)'=='[conf.Name]|[platformName]'"">
+    <OutDir>[options.OutputDirectory]\</OutDir>
+    <IntDir>[options.IntermediateDirectory]\</IntDir>
+    <NMakeBuildCommandLine>[conf.CustomBuildSettings.BuildCommand]</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>[conf.CustomBuildSettings.RebuildCommand]</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>[conf.CustomBuildSettings.CleanCommand]</NMakeCleanCommandLine>
+    <NMakeOutput>[conf.CustomBuildSettings.OutputFile]</NMakeOutput>
+    <NMakePreprocessorDefinitions>[options.PreprocessorDefinitions]</NMakePreprocessorDefinitions>
+    <NMakeIncludeSearchPath>[options.AdditionalIncludeDirectories]</NMakeIncludeSearchPath>
   </PropertyGroup>
 ";
     }

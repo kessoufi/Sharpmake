@@ -23,7 +23,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Ubisoft")]
 [assembly: AssemblyProduct("Sharpmake")]
-[assembly: AssemblyCopyright("Copyright © Ubisoft 2017")]
+[assembly: AssemblyCopyright("Copyright \u00A9 Ubisoft 2017")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -44,11 +44,11 @@ using System.Runtime.InteropServices;
 //
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
-// [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("1.0.0")]
+[assembly: AssemblyVersion("0.11.2.*")]
 #pragma warning disable CS7035
-[assembly: AssemblyFileVersion("1.0.0.0 (LocalBuild)")]
-#pragma warning restore 
+[assembly: AssemblyFileVersion("0.11.2.* (LocalBuild)")]
+#pragma warning restore
 
 [assembly: InternalsVisibleTo("Sharpmake.Application")]
 [assembly: InternalsVisibleTo("Sharpmake.Generators")]
+[assembly: InternalsVisibleTo("Sharpmake.UnitTests")]

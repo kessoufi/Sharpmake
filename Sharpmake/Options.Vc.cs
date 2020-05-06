@@ -29,23 +29,42 @@ namespace Sharpmake
                     v100, // Visual Studio 2010
                     [DevEnvVersion(minimum = DevEnv.vs2012)]
                     v110, // Visual Studio 2012
+                    [DevEnvVersion(minimum = DevEnv.vs2012)]
+                    v110_xp, // Visual Studio 2012 - Windows XP
                     [DevEnvVersion(minimum = DevEnv.vs2013)]
                     v120, // Visual Studio 2013
+                    [DevEnvVersion(minimum = DevEnv.vs2013)]
+                    v120_xp, // Visual Studio 2013 - Windows XP
                     [DevEnvVersion(minimum = DevEnv.vs2015)]
                     v140, // Visual Studio 2015
+                    [DevEnvVersion(minimum = DevEnv.vs2015)]
+                    v140_xp, // Visual Studio 2015 - Windows XP
                     [DevEnvVersion(minimum = DevEnv.vs2017)]
                     v141, // Visual Studio 2017
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    v141_xp, // Visual Studio 2017 - Windows XP
+                    [DevEnvVersion(minimum = DevEnv.vs2019)]
+                    v142, // Visual Studio 2019
                     [DevEnvVersion(minimum = DevEnv.vs2012)]
-                    LLVM_vs2012 // LLVM from Visual Studio 2012
+                    LLVM_vs2012, // LLVM from Visual Studio 2012
+                    [DevEnvVersion(minimum = DevEnv.vs2015)]
+                    LLVM_vs2014, // LLVM from Visual Studio 2015
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    LLVM, // LLVM from Visual Studio 2017
                 }
 
                 public enum WindowsTargetPlatformVersion
                 {
                     v8_1,
-                    v10_0_10240_0,
-                    v10_0_10586_0,
-                    v10_0_14393_0,
-                    v10_0_15063_0
+                    v10_0_10240_0, // RTM (even if never named like that officially)
+                    v10_0_10586_0, // November 2015 Update
+                    v10_0_14393_0, // 2016 Anniversary Update
+                    v10_0_15063_0, // 2017 Creators Update
+                    v10_0_16299_0, // 2017 Fall Creators Update
+                    v10_0_17134_0, // 1803, April 2018 Update
+                    v10_0_17763_0, // 1809, October 2018 Update
+                    v10_0_18362_0, // 1903, May 2019 Update
+                    Latest,        // latest available in host machine
                 }
 
                 public enum CharacterSet
@@ -110,6 +129,16 @@ namespace Sharpmake
                     Disable
                 }
 
+                public enum DiagnosticsFormat
+                {
+                    [Default]
+                    Classic, // default, only show the line number
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    ColumnInfo, // line + column
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    Caret // context + caret
+                }
+
                 public enum EnableManagedIncrementalBuild
                 {
                     [Default]
@@ -135,12 +164,21 @@ namespace Sharpmake
                     UseMfcDynamic
                 }
 
+                [Obsolete("Please use " + nameof(PreferredToolArchitecture) + " instead", true)]
                 public enum NativeEnvironment
                 {
                     [DevEnvVersion(minimum = DevEnv.vs2012)]
                     Enable,
                     [Default]
                     Disable
+                }
+
+                public enum PreferredToolArchitecture
+                {
+                    [Default]
+                    Default,
+                    x86,
+                    x64
                 }
 
                 public enum DisableFastUpToDateCheck
@@ -346,6 +384,22 @@ namespace Sharpmake
                     Enable,
                 }
 
+                public enum CreateHotPatchableCode
+                {
+                    [Default]
+                    Default,
+                    Disable,
+                    Enable,
+                }
+
+                public enum ConformanceMode
+                {
+                    [Default]
+                    Disable,
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    Enable,
+                }
+
                 public enum DisableLanguageExtensions
                 {
                     [Default]
@@ -360,10 +414,18 @@ namespace Sharpmake
                     Enable,
                 }
 
+                [Obsolete("Use option RemoveUnreferencedCodeData instead")]
                 public enum RemovedUnreferencedCOMDAT
                 {
-                    [Default]
                     Disable,
+                    [Default]
+                    Enable,
+                }
+
+                public enum RemoveUnreferencedCodeData
+                {
+                    Disable,
+                    [Default]
                     Enable,
                 }
 
@@ -425,6 +487,14 @@ namespace Sharpmake
                     Enable
                 }
 
+                public enum DefineCPlusPlus
+                {
+                    Default,
+                    Disable,
+                    [Default]
+                    Enable
+                }
+
                 public class DisableSpecificWarnings : Strings
                 {
                     public DisableSpecificWarnings(params string[] warnings)
@@ -451,10 +521,36 @@ namespace Sharpmake
                     CPP98,
                     [Default]
                     CPP11,
+                    [DevEnvVersion(minimum = DevEnv.vs2015)]
                     CPP14,
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    CPP17,
                     GNU98,
                     GNU11,
-                    GNU14
+                    [DevEnvVersion(minimum = DevEnv.vs2015)]
+                    GNU14,
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    GNU17,
+                    [DevEnvVersion(minimum = DevEnv.vs2015)]
+                    Latest
+                }
+
+                public enum SupportJustMyCode
+                {
+                    [Default]
+                    Default,
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    Yes,
+                    No
+                }
+
+                public enum SpectreMitigation
+                {
+                    [Default]
+                    Default,
+                    [DevEnvVersion(minimum = DevEnv.vs2017)]
+                    Enabled,
+                    Disabled
                 }
             }
 
@@ -465,6 +561,23 @@ namespace Sharpmake
                     Enable,
                     [Default]
                     Disable
+                }
+            }
+
+            public static class Librarian
+            {
+                public enum TreatLibWarningAsErrors
+                {
+                    Enable,
+                    [Default]
+                    Disable
+                }
+
+                public class DisableSpecificWarnings : Strings
+                {
+                    public DisableSpecificWarnings(params string[] warnings)
+                        : base(warnings)
+                    { }
                 }
             }
 
@@ -569,6 +682,11 @@ namespace Sharpmake
                     Disable
                 }
 
+                /// <summary>
+                /// Enable will write /DEBUG, and let MS linker decide to use FastLink or Full PDBs
+                ///   If you want to force DEBUG:FULL, set both GenerateDebugInformation
+                ///   and GenerateFullProgramDatabaseFile to Enable
+                /// </summary>
                 public enum GenerateDebugInformation
                 {
                     [Default]
@@ -581,6 +699,7 @@ namespace Sharpmake
                 public enum GenerateFullProgramDatabaseFile
                 {
                     [Default]
+                    Default,
                     Disable,
                     [DevEnvVersion(minimum = DevEnv.vs2015)]
                     Enable
@@ -669,6 +788,12 @@ namespace Sharpmake
                     SupportLargerThan2Gb
                 }
 
+                public enum AllowIsolation
+                {
+                    [Default]
+                    Enabled,
+                    Disabled
+                }
 
                 public enum Reference
                 {
@@ -719,6 +844,16 @@ namespace Sharpmake
                     Disable
                 }
 
+                public enum CreateHotPatchableImage
+                {
+                    [Default]
+                    Disable,
+                    Enable,
+                    X86Image,
+                    X64Image,
+                    ItaniumImage
+                }
+
                 public enum ForceFileOutput
                 {
                     [Default]
@@ -752,6 +887,13 @@ namespace Sharpmake
                     [Default]
                     Default,
                     Enable,
+                    Disable
+                }
+
+                public enum TreatLinkerWarningAsErrors
+                {
+                    Enable,
+                    [Default]
                     Disable
                 }
             }
@@ -790,23 +932,48 @@ namespace Sharpmake
 
                 public class PreprocessorDefinitions : Strings
                 {
-                    public PreprocessorDefinitions(params string[] defintions)
-                        : base(defintions)
+                    public PreprocessorDefinitions(params string[] definitions)
+                        : base(definitions)
                     { }
                 }
 
                 public class UndefinePreprocessorDefinitions : Strings
                 {
-                    public UndefinePreprocessorDefinitions(params string[] defintions)
-                        : base(defintions)
+                    public UndefinePreprocessorDefinitions(params string[] definitions)
+                        : base(definitions)
                     { }
                 }
 
+                [Obsolete("Please use " + nameof(Project.Configuration.ResourceIncludePaths) + " instead", true)]
                 public class AdditionalIncludeDirectories : Strings
                 {
                     public AdditionalIncludeDirectories(params string[] dirs)
                         : base(dirs)
                     { }
+                }
+            }
+
+            public static class LLVM
+            {
+                /// <summary>
+                /// Use clang-cl for compiling.  If this option is disabled, the Microsoft compiler (cl.exe) will be used instead.
+                /// </summary>
+                public enum UseClangCl
+                {
+                    [Default]
+                    Enable,
+                    Disable
+                }
+
+                /// <summary>
+                /// Use lld-link for linking.  If this option is disabled, the Microsoft linker (link.exe) will be used instead.
+                /// </summary>
+                public enum UseLldLink
+                {
+                    [Default]
+                    Default,
+                    Enable,
+                    Disable
                 }
             }
         }

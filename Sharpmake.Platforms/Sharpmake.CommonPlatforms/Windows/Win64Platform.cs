@@ -14,6 +14,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Sharpmake.Generators;
 using Sharpmake.Generators.FastBuild;
 using Sharpmake.Generators.VisualStudio;
@@ -24,6 +25,7 @@ namespace Sharpmake
     {
         [PlatformImplementation(Platform.win64,
             typeof(IPlatformDescriptor),
+            typeof(Project.Configuration.IConfigurationTasks),
             typeof(IFastBuildCompilerSettings),
             typeof(IWindowsFastBuildCompilerSettings),
             typeof(IPlatformBff),
@@ -42,36 +44,69 @@ namespace Sharpmake
 
             #region IMicrosoftPlatformBff implementation
             public override string BffPlatformDefine => "WIN64";
-            public override string CConfigName => ".win64Config";
             public override bool SupportsResourceFiles => true;
+
+            public override string CConfigName(Configuration conf)
+            {
+                var devEnv = conf.Target.GetFragment<DevEnv>();
+                string platformToolsetString = string.Empty;
+                var platformToolset = Options.GetObject<Options.Vc.General.PlatformToolset>(conf);
+                if (platformToolset != Options.Vc.General.PlatformToolset.Default && !platformToolset.IsDefaultToolsetForDevEnv(devEnv))
+                    platformToolsetString = $"_{platformToolset}";
+
+                string lldString = string.Empty;
+                var useLldLink = Options.GetObject<Options.Vc.LLVM.UseLldLink>(conf);
+                if (useLldLink == Options.Vc.LLVM.UseLldLink.Enable ||
+                   (useLldLink == Options.Vc.LLVM.UseLldLink.Default && platformToolset == Options.Vc.General.PlatformToolset.LLVM))
+                {
+                    lldString = "_LLD";
+                }
+
+                return $".win64{platformToolsetString}{lldString}Config";
+            }
+
+            public override string CppConfigName(Configuration conf)
+            {
+                return CConfigName(conf);
+            }
 
             public override void AddCompilerSettings(
                 IDictionary<string, CompilerSettings> masterCompilerSettings,
-                string compilerName,
-                string rootPath,
-                DevEnv devEnv,
-                string projectRootPath
+                Project.Configuration conf
             )
             {
-                var fastBuildCompilerSettings = PlatformRegistry.Get<IWindowsFastBuildCompilerSettings>(Platform.win64);
-                if (!fastBuildCompilerSettings.BinPath.ContainsKey(devEnv))
-                    fastBuildCompilerSettings.BinPath.Add(devEnv, devEnv.GetVisualStudioBinPath(Platform.win64));
-                if (!fastBuildCompilerSettings.LinkerPath.ContainsKey(devEnv))
-                    fastBuildCompilerSettings.LinkerPath.Add(devEnv, fastBuildCompilerSettings.BinPath[devEnv]);
-                if (!fastBuildCompilerSettings.ResCompiler.ContainsKey(devEnv))
-                    fastBuildCompilerSettings.ResCompiler.Add(devEnv, devEnv.GetWindowsResourceCompiler(Platform.win64));
+                var projectRootPath = conf.Project.RootPath;
+                var devEnv = conf.Target.GetFragment<DevEnv>();
+                var platform = Platform.win64; // could also been retrieved from conf.Target.GetPlatform(), if we want
 
-                CompilerSettings compilerSettings = GetMasterCompilerSettings(masterCompilerSettings, compilerName, rootPath, devEnv, projectRootPath, false);
+                string compilerName = "Compiler-" + Util.GetSimplePlatformString(platform);
+
+                var platformToolset = Options.GetObject<Options.Vc.General.PlatformToolset>(conf);
+                if (platformToolset == Options.Vc.General.PlatformToolset.LLVM)
+                {
+                    var useClangCl = Options.GetObject<Options.Vc.LLVM.UseClangCl>(conf);
+
+                    // Use default platformToolset to get MS compiler instead of Clang, when ClanCl is disabled
+                    if (useClangCl == Options.Vc.LLVM.UseClangCl.Disable)
+                        platformToolset = Options.Vc.General.PlatformToolset.Default;
+                }
+
+                if (platformToolset != Options.Vc.General.PlatformToolset.Default && !platformToolset.IsDefaultToolsetForDevEnv(devEnv))
+                    compilerName += "-" + platformToolset;
+                else
+                    compilerName += "-" + devEnv;
+
+                CompilerSettings compilerSettings = GetMasterCompilerSettings(masterCompilerSettings, compilerName, devEnv, projectRootPath, platformToolset, false);
                 compilerSettings.PlatformFlags |= Platform.win64;
-                SetConfiguration(compilerSettings.Configurations, string.Empty, projectRootPath, devEnv, false);
+                SetConfiguration(conf, compilerSettings.Configurations, CppConfigName(conf), projectRootPath, devEnv, false);
             }
 
-            public override CompilerSettings GetMasterCompilerSettings(
+            public CompilerSettings GetMasterCompilerSettings(
                 IDictionary<string, CompilerSettings> masterCompilerSettings,
                 string compilerName,
-                string rootPath,
                 DevEnv devEnv,
                 string projectRootPath,
+                Options.Vc.General.PlatformToolset platformToolset,
                 bool useCCompiler
             )
             {
@@ -83,132 +118,260 @@ namespace Sharpmake
                 }
                 else
                 {
-                    string pathToCompiler = devEnv.GetVisualStudioBinPath(Platform.win64).ReplaceHeadPath(rootPath, "$RootPath$");
+                    DevEnv? compilerDevEnv = null;
+                    string platformToolSetPath = null;
+                    string pathToCompiler = null;
+                    string compilerExeName = null;
+                    var compilerFamily = Sharpmake.CompilerFamily.Auto;
+                    var fastBuildSettings = PlatformRegistry.Get<IFastBuildCompilerSettings>(Platform.win64);
 
-                    Strings extraFiles = new Strings();
-
-                    extraFiles.Add(
-                        Path.Combine(pathToCompiler, "c1.dll"),
-                        Path.Combine(pathToCompiler, "c1xx.dll"),
-                        Path.Combine(pathToCompiler, "c2.dll"),
-                        Path.Combine(pathToCompiler, "mspdbcore.dll"),
-                        Path.Combine(pathToCompiler, "mspdbsrv.exe"),
-                        Path.Combine(pathToCompiler, @"1033\clui.dll")
-                    );
-
-                    switch (devEnv)
+                    switch (platformToolset)
                     {
-                        case DevEnv.vs2012:
-                            {
-                                extraFiles.Add(
-                                    Path.Combine(pathToCompiler, "c1ast.dll"),
-                                    Path.Combine(pathToCompiler, "c1xxast.dll"),
-                                    Path.Combine(pathToCompiler, "mspft110.dll"),
-                                    Path.Combine(pathToCompiler, "msobj110.dll"),
-                                    Path.Combine(pathToCompiler, "mspdb110.dll"),
-                                    @"$RootPath$\redist\x64\Microsoft.VC110.CRT\msvcp110.dll",
-                                    @"$RootPath$\redist\x64\Microsoft.VC110.CRT\msvcr110.dll",
-                                    @"$RootPath$\redist\x64\Microsoft.VC110.CRT\vccorlib110.dll"
-                                );
-                            }
+                        case Options.Vc.General.PlatformToolset.Default:
+                            compilerDevEnv = devEnv;
                             break;
-                        case DevEnv.vs2013:
-                            {
-                                extraFiles.Add(
-                                    Path.Combine(pathToCompiler, "c1ast.dll"),
-                                    Path.Combine(pathToCompiler, "c1xxast.dll"),
-                                    Path.Combine(pathToCompiler, "mspft120.dll"),
-                                    Path.Combine(pathToCompiler, "msobj120.dll"),
-                                    Path.Combine(pathToCompiler, "mspdb120.dll"),
-                                    @"$RootPath$\redist\x64\Microsoft.VC120.CRT\msvcp120.dll",
-                                    @"$RootPath$\redist\x64\Microsoft.VC120.CRT\msvcr120.dll",
-                                    @"$RootPath$\redist\x64\Microsoft.VC120.CRT\vccorlib120.dll"
-                                );
-                            }
+                        case Options.Vc.General.PlatformToolset.v100:
+                            compilerDevEnv = DevEnv.vs2010;
                             break;
-                        case DevEnv.vs2015:
-                        case DevEnv.vs2017:
-                            {
-                                string systemDllPath = FastBuildSettings.SystemDllRoot;
-                                if (systemDllPath == null)
-                                    systemDllPath = KitsRootPaths.GetRoot(KitsRootEnum.KitsRoot10) + @"Redist\ucrt\DLLs\x64\";
+                        case Options.Vc.General.PlatformToolset.v110:
+                        case Options.Vc.General.PlatformToolset.v110_xp:
+                            compilerDevEnv = DevEnv.vs2012;
+                            break;
+                        case Options.Vc.General.PlatformToolset.v120:
+                        case Options.Vc.General.PlatformToolset.v120_xp:
+                            compilerDevEnv = DevEnv.vs2013;
+                            break;
+                        case Options.Vc.General.PlatformToolset.v140:
+                        case Options.Vc.General.PlatformToolset.v140_xp:
+                            compilerDevEnv = DevEnv.vs2015;
+                            break;
+                        case Options.Vc.General.PlatformToolset.v141:
+                        case Options.Vc.General.PlatformToolset.v141_xp:
+                            compilerDevEnv = DevEnv.vs2017;
+                            break;
+                        case Options.Vc.General.PlatformToolset.v142:
+                            compilerDevEnv = DevEnv.vs2019;
+                            break;
+                        case Options.Vc.General.PlatformToolset.LLVM_vs2012:
+                        case Options.Vc.General.PlatformToolset.LLVM_vs2014:
+                        case Options.Vc.General.PlatformToolset.LLVM:
 
-                                if (!Path.IsPathRooted(systemDllPath))
-                                    systemDllPath = Util.SimplifyPath(Path.Combine(projectRootPath, systemDllPath));
+                            platformToolSetPath = ClangForWindows.Settings.LLVMInstallDir;
+                            pathToCompiler = Path.Combine(platformToolSetPath, "bin");
+                            compilerExeName = "clang-cl.exe";
 
-                                extraFiles.Add(
-                                    Path.Combine(pathToCompiler, "msobj140.dll"),
-                                    Path.Combine(pathToCompiler, "mspft140.dll"),
-                                    Path.Combine(pathToCompiler, "mspdb140.dll")
-                                );
+                            var compilerFamilyKey = new FastBuildWindowsCompilerFamilyKey(devEnv, platformToolset);
+                            if (!fastBuildSettings.CompilerFamily.TryGetValue(compilerFamilyKey, out compilerFamily))
+                                compilerFamily = Sharpmake.CompilerFamily.ClangCl;
 
-                                if (devEnv == DevEnv.vs2015)
-                                {
-                                    extraFiles.Add(
-
-                                        Path.Combine(pathToCompiler, "vcvars64.bat"),
-                                        @"$RootPath$\redist\x64\Microsoft.VC140.CRT\concrt140.dll",
-                                        @"$RootPath$\redist\x64\Microsoft.VC140.CRT\msvcp140.dll",
-                                        @"$RootPath$\redist\x64\Microsoft.VC140.CRT\vccorlib140.dll",
-                                        @"$RootPath$\redist\x64\Microsoft.VC140.CRT\vcruntime140.dll",
-                                        Path.Combine(systemDllPath, "ucrtbase.dll")
-                                    );
-                                }
-                                else
-                                {
-                                    extraFiles.Add(
-                                        Path.Combine(pathToCompiler, "mspdbcore.dll"),
-                                        Path.Combine(pathToCompiler, "msvcdis140.dll"),
-                                        Path.Combine(pathToCompiler, "msvcp140.dll"),
-                                        Path.Combine(pathToCompiler, "pgodb140.dll"),
-                                        Path.Combine(pathToCompiler, "vcruntime140.dll"),
-                                        @"$RootPath$\Auxiliary\Build\vcvars64.bat"
-                                    );
-                                }
-
-                                try
-                                {
-                                    foreach (string p in Directory.EnumerateFiles(systemDllPath, "api-ms-win-*.dll"))
-                                        extraFiles.Add(p);
-                                }
-                                catch { }
-                            }
                             break;
                         default:
-                            throw new NotImplementedException("This devEnv (" + devEnv + ") is not supported!");
+                            throw new ArgumentOutOfRangeException();
                     }
 
-                    string executable = Path.Combine(pathToCompiler, "cl.exe");
+                    if (compilerDevEnv.HasValue)
+                    {
+                        platformToolSetPath = Path.Combine(compilerDevEnv.Value.GetVisualStudioDir(), "VC");
+                        pathToCompiler = compilerDevEnv.Value.GetVisualStudioBinPath(Platform.win64);
+                        compilerExeName = "cl.exe";
 
-                    compilerSettings = new CompilerSettings(compilerName, Platform.win64, extraFiles, executable, rootPath, devEnv, new Dictionary<string, CompilerSettings.Configuration>());
+                        var compilerFamilyKey = new FastBuildWindowsCompilerFamilyKey(devEnv, platformToolset);
+                        if (!fastBuildSettings.CompilerFamily.TryGetValue(compilerFamilyKey, out compilerFamily))
+                            compilerFamily = Sharpmake.CompilerFamily.MSVC;
+                    }
+
+                    Strings extraFiles = new Strings();
+                    {
+                        Strings userExtraFiles;
+                        if (fastBuildSettings.ExtraFiles.TryGetValue(devEnv, out userExtraFiles))
+                            extraFiles.AddRange(userExtraFiles);
+                    }
+
+                    if (compilerDevEnv.HasValue)
+                    {
+                        extraFiles.Add(
+                            @"$ExecutableRootPath$\c1.dll",
+                            @"$ExecutableRootPath$\c1xx.dll",
+                            @"$ExecutableRootPath$\c2.dll",
+                            @"$ExecutableRootPath$\mspdbcore.dll",
+                            @"$ExecutableRootPath$\mspdbsrv.exe",
+                            @"$ExecutableRootPath$\1033\clui.dll"
+                        );
+
+                        switch (devEnv)
+                        {
+                            case DevEnv.vs2012:
+                                {
+                                    extraFiles.Add(
+                                        @"$ExecutableRootPath$\c1ast.dll",
+                                        @"$ExecutableRootPath$\c1xxast.dll",
+                                        @"$ExecutableRootPath$\mspft110.dll",
+                                        @"$ExecutableRootPath$\msobj110.dll",
+                                        @"$ExecutableRootPath$\mspdb110.dll",
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC110.CRT\msvcp110.dll"),
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC110.CRT\msvcr110.dll"),
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC110.CRT\vccorlib110.dll")
+                                    );
+                                }
+                                break;
+                            case DevEnv.vs2013:
+                                {
+                                    extraFiles.Add(
+                                        @"$ExecutableRootPath$\c1ast.dll",
+                                        @"$ExecutableRootPath$\c1xxast.dll",
+                                        @"$ExecutableRootPath$\mspft120.dll",
+                                        @"$ExecutableRootPath$\msobj120.dll",
+                                        @"$ExecutableRootPath$\mspdb120.dll",
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC120.CRT\msvcp120.dll"),
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC120.CRT\msvcr120.dll"),
+                                        Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC120.CRT\vccorlib120.dll")
+                                    );
+                                }
+                                break;
+                            case DevEnv.vs2015:
+                            case DevEnv.vs2017:
+                            case DevEnv.vs2019:
+                                {
+                                    string systemDllPath = FastBuildSettings.SystemDllRoot;
+                                    if (systemDllPath == null)
+                                    {
+                                        var windowsTargetPlatformVersion = KitsRootPaths.GetWindowsTargetPlatformVersionForDevEnv(devEnv);
+                                        string redistDirectory;
+                                        if (windowsTargetPlatformVersion <= Options.Vc.General.WindowsTargetPlatformVersion.v10_0_17134_0)
+                                            redistDirectory = @"Redist\ucrt\DLLs\x64\";
+                                        else
+                                            redistDirectory = $@"Redist\{windowsTargetPlatformVersion.ToVersionString()}\ucrt\DLLs\x64\";
+
+                                        systemDllPath = Path.Combine(KitsRootPaths.GetRoot(KitsRootEnum.KitsRoot10), redistDirectory);
+                                    }
+
+                                    if (!Path.IsPathRooted(systemDllPath))
+                                        systemDllPath = Util.SimplifyPath(Path.Combine(projectRootPath, systemDllPath));
+
+                                    extraFiles.Add(
+                                        @"$ExecutableRootPath$\msobj140.dll",
+                                        @"$ExecutableRootPath$\mspft140.dll",
+                                        @"$ExecutableRootPath$\mspdb140.dll"
+                                    );
+
+                                    if (devEnv == DevEnv.vs2015)
+                                    {
+                                        extraFiles.Add(
+                                            @"$ExecutableRootPath$\vcvars64.bat",
+                                            Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC140.CRT\concrt140.dll"),
+                                            Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC140.CRT\msvcp140.dll"),
+                                            Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC140.CRT\vccorlib140.dll"),
+                                            Path.Combine(platformToolSetPath, @"redist\x64\Microsoft.VC140.CRT\vcruntime140.dll"),
+                                            Path.Combine(systemDllPath, "ucrtbase.dll")
+                                        );
+                                    }
+                                    else
+                                    {
+                                        extraFiles.Add(
+                                            @"$ExecutableRootPath$\mspdbcore.dll",
+                                            @"$ExecutableRootPath$\msvcdis140.dll",
+                                            @"$ExecutableRootPath$\msvcp140.dll",
+                                            @"$ExecutableRootPath$\pgodb140.dll",
+                                            @"$ExecutableRootPath$\vcruntime140.dll",
+                                            Path.Combine(platformToolSetPath, @"Auxiliary\Build\vcvars64.bat")
+                                        );
+                                    }
+
+                                    if (devEnv == DevEnv.vs2019)
+                                    {
+                                        Version toolsVersion = devEnv.GetVisualStudioVCToolsVersion();
+
+                                        if (toolsVersion >= new Version("14.22.27905"))
+                                            extraFiles.Add(@"$ExecutableRootPath$\tbbmalloc.dll");
+
+                                        if (toolsVersion >= new Version("14.25.28610"))
+                                            extraFiles.Add(@"$ExecutableRootPath$\vcruntime140_1.dll");
+                                    }
+
+                                    try
+                                    {
+                                        foreach (string p in Util.DirectoryGetFiles(systemDllPath, "api-ms-win-*.dll"))
+                                            extraFiles.Add(p);
+                                    }
+                                    catch { }
+                                }
+                                break;
+                            default:
+                                throw new NotImplementedException("This devEnv (" + devEnv + ") is not supported!");
+                        }
+                    }
+
+                    string executable = Path.Combine("$ExecutableRootPath$", compilerExeName);
+
+                    compilerSettings = new CompilerSettings(compilerName, compilerFamily, Platform.win64, extraFiles, executable, pathToCompiler, devEnv, new Dictionary<string, CompilerSettings.Configuration>());
                     masterCompilerSettings.Add(compilerName, compilerSettings);
                 }
 
                 return compilerSettings;
             }
 
-            public override void SetConfiguration(IDictionary<string, CompilerSettings.Configuration> configurations, string compilerName, string projectRootPath, DevEnv devEnv, bool useCCompiler)
+            private void SetConfiguration(
+                Project.Configuration conf,
+                IDictionary<string, CompilerSettings.Configuration> configurations,
+                string configName,
+                string projectRootPath,
+                DevEnv devEnv,
+                bool useCCompiler)
             {
-                string configName = ".win64Config";
+                string linkerPathOverride = null;
+                string linkerExeOverride = null;
+                string librarianExeOverride = null;
+                GetLinkerExecutableInfo(conf, out linkerPathOverride, out linkerExeOverride, out librarianExeOverride);
 
                 if (!configurations.ContainsKey(configName))
                 {
                     var fastBuildCompilerSettings = PlatformRegistry.Get<IWindowsFastBuildCompilerSettings>(Platform.win64);
-                    string binPath = fastBuildCompilerSettings.BinPath[devEnv];
-                    string linkerPath = fastBuildCompilerSettings.LinkerPath[devEnv];
-                    string resCompiler = fastBuildCompilerSettings.ResCompiler[devEnv];
-                    configurations.Add(configName,
+                    string binPath;
+                    if (!fastBuildCompilerSettings.BinPath.TryGetValue(devEnv, out binPath))
+                        binPath = devEnv.GetVisualStudioBinPath(Platform.win64);
+
+                    string linkerPath;
+                    if (!string.IsNullOrEmpty(linkerPathOverride))
+                        linkerPath = linkerPathOverride;
+                    else if (!fastBuildCompilerSettings.LinkerPath.TryGetValue(devEnv, out linkerPath))
+                        linkerPath = binPath;
+
+                    string linkerExe;
+                    if (!string.IsNullOrEmpty(linkerExeOverride))
+                        linkerExe = linkerExeOverride;
+                    else if (!fastBuildCompilerSettings.LinkerExe.TryGetValue(devEnv, out linkerExe))
+                        linkerExe = "link.exe";
+
+                    string librarianExe;
+                    if (!string.IsNullOrEmpty(librarianExeOverride))
+                        librarianExe = librarianExeOverride;
+                    else if (!fastBuildCompilerSettings.LibrarianExe.TryGetValue(devEnv, out librarianExe))
+                        librarianExe = "lib.exe";
+
+                    string resCompiler;
+                    if (!fastBuildCompilerSettings.ResCompiler.TryGetValue(devEnv, out resCompiler))
+                        resCompiler = devEnv.GetWindowsResourceCompiler(Platform.win64);
+
+                    configurations.Add(
+                        configName,
                         new CompilerSettings.Configuration(
                             Platform.win64,
                             binPath: Util.GetCapitalizedPath(Util.PathGetAbsolute(projectRootPath, binPath)),
                             linkerPath: Util.GetCapitalizedPath(Util.PathGetAbsolute(projectRootPath, linkerPath)),
                             resourceCompiler: Util.GetCapitalizedPath(Util.PathGetAbsolute(projectRootPath, resCompiler)),
-                            librarian: @"$LinkerPath$\lib.exe",
-                            linker: @"$LinkerPath$\link.exe"
+                            librarian: Path.Combine(@"$LinkerPath$", librarianExe),
+                            linker: Path.Combine(@"$LinkerPath$", linkerExe)
                         )
                     );
 
-                    configurations.Add(".win64ConfigMasm", new CompilerSettings.Configuration(Platform.win64, compiler: @"$BinPath$\ml64.exe", usingOtherConfiguration: @".win64Config"));
+                    configurations.Add(
+                        configName + "Masm",
+                        new CompilerSettings.Configuration(
+                            Platform.win64,
+                            compiler: @"$BinPath$\ml64.exe",
+                            usingOtherConfiguration: configName
+                        )
+                    );
                 }
             }
             #endregion
@@ -230,9 +393,85 @@ namespace Sharpmake
                 context.CommandLineOptions["TargetMachine"] = "/MACHINE:X64";
             }
 
-            protected override IEnumerable<string> GetPlatformIncludePathsImpl(IGenerationContext context)
+            public override void SelectPlatformAdditionalDependenciesOptions(IGenerationContext context)
             {
-                return EnumerateSemiColonSeparatedString(context.DevelopmentEnvironment.GetWindowsIncludePath());
+                base.SelectPlatformAdditionalDependenciesOptions(context);
+                context.Options["AdditionalDependencies"] += ";%(AdditionalDependencies)";
+            }
+
+            protected override IEnumerable<IncludeWithPrefix> GetPlatformIncludePathsWithPrefixImpl(IGenerationContext context)
+            {
+                var includes = new List<IncludeWithPrefix>();
+                string includePrefix = "/I";
+
+                if (Options.GetObject<Options.Vc.General.PlatformToolset>(context.Configuration).IsLLVMToolchain() && Options.GetObject<Options.Vc.LLVM.UseClangCl>(context.Configuration) == Options.Vc.LLVM.UseClangCl.Enable)
+                {
+                    includePrefix = "/clang:-isystem";
+                    string clangIncludePath = ClangForWindows.GetWindowsClangIncludePath();
+                    includes.Add(new IncludeWithPrefix(includePrefix, clangIncludePath));
+                }
+
+                // when using clang-cl, mark MSVC includes, so they are properly recognized
+                IEnumerable<string> msvcIncludePaths = EnumerateSemiColonSeparatedString(context.DevelopmentEnvironment.GetWindowsIncludePath());
+                includes.AddRange(msvcIncludePaths.Select(path => new IncludeWithPrefix(includePrefix, path)));
+
+                // Additional system includes
+                OrderableStrings SystemIncludes = new OrderableStrings(context.Configuration.DependenciesIncludeSystemPaths);
+                SystemIncludes.AddRange(context.Configuration.IncludeSystemPaths);
+                if (SystemIncludes.Count > 0)
+                {
+                    SystemIncludes.Sort();
+                    includes.AddRange(SystemIncludes.Select(path => new IncludeWithPrefix(includePrefix, path)));
+                }
+                return includes;
+            }
+
+            public override void GeneratePlatformSpecificProjectDescription(IVcxprojGenerationContext context, IFileGenerator generator)
+            {
+                if (!ClangForWindows.Settings.OverridenLLVMInstallDir)
+                    return;
+
+                if (context.DevelopmentEnvironmentsRange.MinDevEnv != context.DevelopmentEnvironmentsRange.MaxDevEnv)
+                    throw new Error("Different vs versions not supported in the same vcxproj");
+
+                DevEnv uniqueDevEnv = context.DevelopmentEnvironmentsRange.MinDevEnv;
+
+                using (generator.Declare("platformName", SimplePlatformString))
+                {
+                    generator.Write(Vcxproj.Template.Project.ProjectDescriptionStartPlatformConditional);
+                    {
+                        switch (uniqueDevEnv)
+                        {
+                            case DevEnv.vs2017:
+                                {
+                                    string platformFolder = MSBuildGlobalSettings.GetCppPlatformFolder(context.DevelopmentEnvironmentsRange.MinDevEnv, Platform.win64);
+                                    if (!string.IsNullOrEmpty(platformFolder))
+                                    {
+                                        using (generator.Declare("platformFolder", Util.EnsureTrailingSeparator(platformFolder))) // _PlatformFolder require the path to end with a "\"
+                                            generator.Write(Vcxproj.Template.Project.PlatformFolderOverride);
+                                    }
+                                }
+                                break;
+                            case DevEnv.vs2019:
+                                {
+                                    // Note1: _PlatformFolder override is deprecated starting with vs2019, so we write AdditionalVCTargetsPath instead
+                                    // Note2: MSBuildGlobalSettings.SetCppPlatformFolder for vs2019 is no more the valid way to handle it. Older buildtools packages can anyway contain it, and need upgrade.
+
+                                    if (!string.IsNullOrEmpty(MSBuildGlobalSettings.GetCppPlatformFolder(uniqueDevEnv, Platform.win64)))
+                                        throw new Error("SetCppPlatformFolder is not supported by VS2019 correctly: use of MSBuildGlobalSettings.SetCppPlatformFolder should be replaced by use of MSBuildGlobalSettings.SetAdditionalVCTargetsPath.");
+                                    // vs2019 use AdditionalVCTargetsPath
+                                    string additionalVCTargetsPath = MSBuildGlobalSettings.GetAdditionalVCTargetsPath(uniqueDevEnv, Platform.win64);
+                                    using (generator.Declare("additionalVCTargetsPath", Util.EnsureTrailingSeparator(additionalVCTargetsPath))) // the path shall end with a "\"
+                                        generator.Write(Vcxproj.Template.Project.AdditionalVCTargetsPath);
+                                }
+                                break;
+                            default:
+                                throw new Error(uniqueDevEnv + " is not supported.");
+                        }
+                        ClangForWindows.WriteLLVMOverrides(context, generator);
+                    }
+                    generator.Write(Vcxproj.Template.Project.PropertyGroupEnd);
+                }
             }
             #endregion
         }

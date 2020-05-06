@@ -11,10 +11,24 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+using System;
 using System.Collections.Generic;
 
 namespace Sharpmake.Generators.VisualStudio
 {
+    public class IncludeWithPrefix
+    {
+        public string CmdLinePrefix { get; }
+        public string Path { get; }
+
+        public IncludeWithPrefix(string cmdLinePrefix, string includePath)
+        {
+            CmdLinePrefix = cmdLinePrefix;
+            Path = includePath;
+        }
+    }
+
     public interface IPlatformVcxproj
     {
         string ExecutableFileExtension { get; }
@@ -30,7 +44,6 @@ namespace Sharpmake.Generators.VisualStudio
         IEnumerable<string> GetImplicitlyDefinedSymbols(IGenerationContext context);
 
         IEnumerable<string> GetLibraryPaths(IGenerationContext context);
-        IEnumerable<string> GetPlatformLibraryPaths(IGenerationContext context);
 
         IEnumerable<string> GetLibraryFiles(IGenerationContext context);
         IEnumerable<string> GetPlatformLibraryFiles(IGenerationContext context);
@@ -39,6 +52,8 @@ namespace Sharpmake.Generators.VisualStudio
         // are the platform's include paths.
         IEnumerable<string> GetIncludePaths(IGenerationContext context);
         IEnumerable<string> GetPlatformIncludePaths(IGenerationContext context);
+        IEnumerable<IncludeWithPrefix> GetPlatformIncludePathsWithPrefix(IGenerationContext context);
+        IEnumerable<string> GetResourceIncludePaths(IGenerationContext context);
 
         IEnumerable<string> GetCxUsingPath(IGenerationContext context);
 
@@ -60,6 +75,7 @@ namespace Sharpmake.Generators.VisualStudio
         void GenerateMakefileConfigurationVcxproj(IVcxprojGenerationContext context, IFileGenerator generator);
         void GenerateProjectCompileVcxproj(IVcxprojGenerationContext context, IFileGenerator generator);
         void GenerateProjectLinkVcxproj(IVcxprojGenerationContext context, IFileGenerator generator);
+        void GenerateProjectMasmVcxproj(IVcxprojGenerationContext context, IFileGenerator generator);
         void GenerateUserConfigurationFile(Project.Configuration conf, IFileGenerator generator); // Should take IVcxprojGenerationContext but this is called by BaseUserFile which should not know that interface.
         void GenerateRunFromPcDeployment(IVcxprojGenerationContext context, IFileGenerator generator);
 
@@ -68,9 +84,13 @@ namespace Sharpmake.Generators.VisualStudio
         void GenerateProjectConfigurationGeneral(IVcxprojGenerationContext context, IFileGenerator generator);
         void GenerateProjectConfigurationGeneral2(IVcxprojGenerationContext context, IFileGenerator generator); // TODO: Merge with the above function and edit the reference projects.
         void GenerateProjectConfigurationFastBuildMakeFile(IVcxprojGenerationContext context, IFileGenerator generator);
+        void GenerateProjectConfigurationCustomMakeFile(IVcxprojGenerationContext context, IFileGenerator generator);
         void GenerateProjectPlatformImportSheet(IVcxprojGenerationContext context, IFileGenerator generator);
         void GeneratePlatformResourceFileList(IVcxprojGenerationContext context, IFileGenerator generator, Strings alreadyWrittenPriFiles, IList<Vcxproj.ProjectFile> resourceFiles, IList<Vcxproj.ProjectFile> imageResourceFiles);
         void GeneratePlatformReferences(IVcxprojGenerationContext context, IFileGenerator generator);
+
+        // type -> files
+        IEnumerable<Tuple<string, List<Vcxproj.ProjectFile>>> GetPlatformFileLists(IVcxprojGenerationContext context);
 
         // TODO: Refactor this.
         void SetupPlatformLibraryOptions(ref string platformLibExtension, ref string platformOutputLibExtension, ref string platformPrefixExtension);

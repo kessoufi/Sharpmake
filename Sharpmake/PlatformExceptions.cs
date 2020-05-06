@@ -25,13 +25,16 @@ namespace Sharpmake
     public class PlatformNotSupportedException : Exception
     {
         internal PlatformNotSupportedException(Type implType)
-            : base($"No default implementation of {implType.Name} is provided.") { }
+            : base($"No default implementation of {implType.Name} is provided.")
+        { }
 
         internal PlatformNotSupportedException(Platform platform, Type implType)
-            : base($"No implementation of {implType.Name} for {platform} is provided.") { }
+            : base($"No implementation of {implType.Name} for {platform} is provided.")
+        { }
 
         protected PlatformNotSupportedException(SerializationInfo info, StreamingContext context)
-            : base(info, context) { }
+            : base(info, context)
+        { }
     }
 
     /// <summary>
@@ -42,14 +45,16 @@ namespace Sharpmake
     public class DuplicatePlatformImplementationException : Exception
     {
         internal DuplicatePlatformImplementationException(string message)
-            : base(message) { }
+            : base(message)
+        { }
 
         protected DuplicatePlatformImplementationException(SerializationInfo info, StreamingContext context)
-            : base(info, context) { }
+            : base(info, context)
+        { }
     }
 
     /// <summary>
-    /// Exception thrown when <see cref="PlatformRegistry"/> is unable to instanciate an interface
+    /// Exception thrown when <see cref="PlatformRegistry"/> is unable to instantiate an interface
     /// implementation object. This is usually because the type has no constructor, or the
     /// constructor threw an exception.
     /// </summary>
@@ -57,9 +62,11 @@ namespace Sharpmake
     public class PlatformImplementationCreationException : Exception
     {
         internal PlatformImplementationCreationException(Type type, Exception innerException)
-            : base($"Failed to instanciate platform implementation type {type.Name}. Check the inner exception for details.", innerException) { }
+            : base($"Failed to instantiate platform implementation type {type.Name}. Check the inner exception for details.", innerException)
+        { }
 
         protected PlatformImplementationCreationException(SerializationInfo info, StreamingContext context)
-            : base(info, context) { }
+            : base(info, context)
+        { }
     }
 }

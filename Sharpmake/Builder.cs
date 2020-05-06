@@ -20,8 +20,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 
-[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Sharpmake.UnitTests")]
-
 namespace Sharpmake
 {
     public class Arguments
@@ -30,7 +28,7 @@ namespace Sharpmake
 
         public Builder Builder { get; }
 
-        public ConfigureOrder ConfigureOrder;
+        public ConfigureOrder ConfigureOrder = ConfigureOrder.New;
 
         public FileInfo MainFileInfo = null;
 
@@ -42,6 +40,23 @@ namespace Sharpmake
                 ITarget.ValidFragmentType(fragmentType);
                 FragmentMasks.Add(fragmentMask);
             }
+        }
+
+        public bool HasFragmentMask(params object[] fragmentMasks)
+        {
+            return FragmentMasks.Any(f =>
+            {
+                foreach (object fragmentMask in fragmentMasks)
+                {
+                    Type fragmentType = fragmentMask.GetType();
+                    ITarget.ValidFragmentType(fragmentType);
+                    if (f.GetType() == fragmentType)
+                    {
+                        return Enum.Equals(f, fragmentMask);
+                    }
+                }
+                return false;
+            });
         }
 
         internal List<Type> TypesToGenerate = new List<Type>();
@@ -114,13 +129,22 @@ namespace Sharpmake
         public bool BlobOnly = false;
         public bool Diagnostics = false;
         private ThreadPool _tasks;
-        private Assembly _projectAssembly;  // keep the instance of manually loaded assembly, it's may be need by other assembly on load ( command line )
-        private Dictionary<string, string> _referenceList; // Keep track of assemblies explicitly referenced with [module: Sharpmake.Reference("...")] in compiled files
+        // Keep all instances of manually built (and loaded) assemblies, as they may be needed by other assemblies on load (command line).
+        private readonly ConcurrentDictionary<string, Assembly> _builtAssemblies = new ConcurrentDictionary<string, Assembly>(); // Assembly Full Path -> Assembly
+        private readonly Dictionary<string, string> _references = new Dictionary<string, string>(); // Keep track of assemblies explicitly referenced with [module: Sharpmake.Reference("...")] in compiled files
 
         public BuildContext.BaseBuildContext Context { get; private set; }
 
+        private readonly BuilderExtension _builderExt;
+
         private ConcurrentDictionary<Type, GenerationOutput> _generationReport = new ConcurrentDictionary<Type, GenerationOutput>();
         private HashSet<Type> _buildScheduledType = new HashSet<Type>();
+
+        private HashSet<Project.Configuration> _usedProjectConfigurations = null;
+
+        public HashSet<string> Defines { get; }
+
+        private readonly List<ISourceAttributeParser> _attributeParsers = new List<ISourceAttributeParser>();
 
         public Builder(
             BuildContext.BaseBuildContext context,
@@ -130,7 +154,8 @@ namespace Sharpmake
             bool blobOnly,
             bool skipInvalidPath,
             bool diagnostics,
-            Func<IGeneratorManager> getGeneratorsManagerCallBack)
+            Func<IGeneratorManager> getGeneratorsManagerCallBack,
+            HashSet<string> defines)
         {
             Context = context;
             Arguments = new Arguments(this);
@@ -144,6 +169,13 @@ namespace Sharpmake
             _getGeneratorsManagerCallBack().InitializeBuilder(this);
             Trace.Assert(Instance == null);
             Instance = this;
+            _builderExt = new BuilderExtension(this);
+            Defines = defines ?? new HashSet<string>();
+
+            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+
+            if (Diagnostics)
+                EventPostGeneration += LogUnusedProjectConfigurations;
 
             if (_multithreaded)
             {
@@ -172,48 +204,48 @@ namespace Sharpmake
             return _solutions.TryGetValue(type, out solution) ? solution : null;
         }
 
-        public void LoadAssemblies(params Assembly[] assemblies)
+        public void ExecuteEntryPointInAssemblies<TEntryPoint>(params Assembly[] assemblies)
+            where TEntryPoint : EntryPoint
         {
-            List<MethodInfo> mainMethods = new List<MethodInfo>();
+            MethodInfo entryPointMethodInfo = null;
 
             foreach (Assembly assembly in assemblies)
             {
-                foreach (Type type in assembly.GetTypes())
+                foreach (Type type in assembly.GetTypes().Where(t => t.IsVisible))
                 {
-                    MethodInfo mainMethodInfo = type.GetMethod("SharpmakeMain");
-                    if (mainMethodInfo != null && mainMethodInfo.IsDefined(typeof(Main), false))
+                    foreach (MethodInfo methodInfo in type.GetMethods())
                     {
-                        if (!mainMethodInfo.IsStatic)
-                            throw new Error("SharpmakeMain method should be static {0}", mainMethodInfo.ToString());
+                        if (!methodInfo.IsDefined(typeof(TEntryPoint), false))
+                            continue;
 
-                        if (mainMethodInfo.GetParameters().Length != 1 ||
-                            mainMethodInfo.GetParameters()[0].GetType() == typeof(Arguments))
-                            throw new Error("SharpmakeMain method should have one parameters of type Sharpmake.Builder: {0} in {1}", mainMethodInfo.ToString(), type.FullName);
+                        if (entryPointMethodInfo != null)
+                            throw new Error($"Multiple entry point found, only one entry point method with [{typeof(TEntryPoint).FullName}] is expected "
+                                            + $"({entryPointMethodInfo.DeclaringType?.FullName}.{entryPointMethodInfo.Name} vs. {type.FullName}.{methodInfo.Name})");
 
-                        mainMethods.Add(mainMethodInfo);
+                        if (!methodInfo.IsStatic)
+                            throw new Error($"Method {type.FullName}.{methodInfo} is defined as an entry point, but is not static");
+
+                        var parameters = methodInfo.GetParameters();
+                        if (parameters.Length != 1 || parameters[0].GetType() == typeof(Arguments))
+                            throw new Error($"Method {type.FullName}.{methodInfo} method must have one argument of type {typeof(Arguments).FullName}");
+
+                        entryPointMethodInfo = methodInfo;
                     }
                 }
             }
 
-            if (mainMethods.Count != 1)
-                throw new Error("sharpmake must contain one and only one static entry point method called Main(Sharpmake.Builder) with [Sharpmake.Main] attribute. Make sure it's public.");
+            if (entryPointMethodInfo == null)
+                return;
 
             try
             {
-                mainMethods[0].Invoke(null, new object[] { Arguments });
+                entryPointMethodInfo.Invoke(null, new object[] { Arguments });
             }
             catch (TargetInvocationException e)
             {
                 if (e.InnerException != null)
-                    throw (e.InnerException);
+                    throw e.InnerException;
             }
-
-            if (Arguments.TypesToGenerate.Count == 0)
-                throw new Error("sharpmake have nothing to generate! Make sure to add builder.Generate<[your_class]>(); in '{0}'.", mainMethods[0].ToString());
-
-            Context.ConfigureOrder = Arguments.ConfigureOrder;
-
-            BuildProjectAndSolution();
         }
 
         public void BuildProjectAndSolution()
@@ -231,20 +263,18 @@ namespace Sharpmake
                         if (type.IsSubclassOf(typeof(Project)))
                         {
                             Project project = LoadProjectType(type);
-                            // Add the project to the instances projects.
                             _projects.Add(type, project);
                             projectDependenciesTypes = project.GetUnresolvedDependenciesTypes();
                         }
                         else if (type.IsSubclassOf(typeof(Solution)))
                         {
                             Solution solution = LoadSolutionType(type);
-                            // Add the project to the instances projects.
                             _solutions.Add(type, solution);
                             projectDependenciesTypes = solution.GetDependenciesProjectTypes();
                         }
                         else
                         {
-                            throw new Error("error, class type note supported: {0}", type.FullName);
+                            throw new Error("error, class type not supported: {0}", type.FullName);
                         }
 
                         foreach (Type projectDependenciesType in projectDependenciesTypes)
@@ -289,7 +319,7 @@ namespace Sharpmake
             }
             else
             {
-                throw new Error("error, class type note supported: {0}", type.FullName);
+                throw new Error("error, class type not supported: {0}", type.FullName);
             }
 
             lock (_buildScheduledType)
@@ -302,7 +332,7 @@ namespace Sharpmake
             }
         }
 
-        public void LoadAssemblies(params string[] assembliesFiles)
+        public Assembly[] LoadAssemblies(params string[] assembliesFiles)
         {
             Strings assemblyFolders = new Strings();
             Strings references = new Strings();
@@ -335,79 +365,102 @@ namespace Sharpmake
             {
                 foreach (var dllName in references)
                 {
-                    try
+                    foreach (var assemblyFolder in assemblyFolders)
                     {
-                        foreach (var assemblyFolder in assemblyFolders)
-                        {
-                            var candidatePath = Path.Combine(assemblyFolder, dllName);
-                            if (File.Exists(candidatePath))
-                                extensionLoader.LoadExtension(candidatePath, false);
-                        }
-                        
-                    }
-                    catch (Error)
-                    {
-                        // skip non-sharpmake extension
+                        var candidatePath = Path.Combine(assemblyFolder, dllName);
+                        if (File.Exists(candidatePath))
+                            extensionLoader.LoadExtension(candidatePath, false);
                     }
                 }
             }
 
-            LoadAssemblies(assemblies);
+            return assemblies;
         }
 
-        // Expect a list of existing files with their full path
-        public void LoadSharpmakeFiles(params string[] sharpmakeFiles)
+        private readonly Lazy<Assembly> _sharpmakeAssembly = new Lazy<Assembly>(() => Assembly.GetAssembly(typeof(Builder)));
+        private readonly Lazy<Assembly> _sharpmakeGeneratorAssembly = new Lazy<Assembly>(() =>
         {
-            Assembler assembler = new Assembler();
-
-            // Add sharpmake assembly
-            Assembly sharpmake = Assembly.GetAssembly(typeof(Builder));
-            assembler.Assemblies.Add(sharpmake);
-
-            // Add generators assembly to be able to reference them from .sharpmake files.
             DirectoryInfo entryDirectoryInfo = new DirectoryInfo(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location));
             string generatorsAssembly = entryDirectoryInfo.FullName + Path.DirectorySeparatorChar + "Sharpmake.Generators.dll";
-            Assembly generators = Assembly.LoadFrom(generatorsAssembly);
-            assembler.Assemblies.Add(generators);
+            return Assembly.LoadFrom(generatorsAssembly);
+        });
 
-            _projectAssembly = assembler.BuildAssembly(sharpmakeFiles);
+        private IAssemblyInfo BuildAndLoadAssembly(IList<string> sharpmakeFiles, BuilderCompileErrorBehavior compileErrorBehavior)
+        {
+            return BuildAndLoadAssembly(sharpmakeFiles, new BuilderContext(this, compileErrorBehavior));
+        }
 
-            if (_projectAssembly == null)
+        private IAssemblyInfo BuildAndLoadAssembly(IList<string> sharpmakeFiles, IBuilderContext context, IEnumerable<ISourceAttributeParser> parsers = null, IEnumerable<IParsingFlowParser> flowParsers = null)
+        {
+            Assembler assembler = new Assembler(Defines);
+
+            // Add sharpmake assembly
+            assembler.Assemblies.Add(_sharpmakeAssembly.Value);
+
+            // Add generators assembly to be able to reference them from .sharpmake.cs files
+            assembler.Assemblies.Add(_sharpmakeGeneratorAssembly.Value);
+
+            // Add attribute parsers
+            if (parsers != null)
+            {
+                assembler.UseDefaultParsers = false;
+                assembler.AttributeParsers.AddRange(parsers);
+            }
+            else
+            {
+                foreach (var parser in _attributeParsers)
+                    assembler.AttributeParsers.Add(parser);
+            }
+
+            if (flowParsers != null)
+            {
+                assembler.ParsingFlowParsers.AddRange(flowParsers);
+            }
+
+            var newAssemblyInfo = assembler.BuildAssembly(context, sharpmakeFiles.ToArray());
+
+            if (newAssemblyInfo.Assembly == null && context.CompileErrorBehavior == BuilderCompileErrorBehavior.ThrowException)
                 throw new InternalError();
 
             // Keep track of assemblies explicitly referenced by compiled files
-            _referenceList = assembler.References.ToDictionary(fullpath => AssemblyName.GetAssemblyName(fullpath).FullName.ToString(), fullpath => fullpath);
-
-            // load platforms if they were passed as references
-            using (var extensionLoader = new ExtensionLoader())
+            foreach (var fullpath in assembler.References.Distinct())
             {
-                foreach (var referencePath in assembler.References)
+                var assemblyName = AssemblyName.GetAssemblyName(fullpath).FullName;
+                string assemblyPath;
+                if (_references.TryGetValue(assemblyName, out assemblyPath) && !string.Equals(assemblyPath, fullpath, StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        extensionLoader.LoadExtension(referencePath, false);
-                    }
-                    catch (Error)
-                    {
-                        // skip non-sharpmake extension
-                    }
+                    throw new Error($"Assembly {assemblyName} present in two different locations: {fullpath} and {assemblyPath}.");
                 }
+                _references[assemblyName] = fullpath;
             }
 
-            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
+            if (newAssemblyInfo.Assembly != null)
+                _builtAssemblies[newAssemblyInfo.Assembly.FullName] = newAssemblyInfo.Assembly;
+            return newAssemblyInfo;
+        }
 
-            LoadAssemblies(_projectAssembly);
+        // Expect a list of existing files with their full path
+        public Assembly LoadSharpmakeFiles(params string[] sharpmakeFiles)
+        {
+            return LoadSharpmakeFiles(BuilderCompileErrorBehavior.ThrowException, sharpmakeFiles).Assembly;
+        }
+
+        public IAssemblyInfo LoadSharpmakeFiles(BuilderCompileErrorBehavior compileErrorBehavior, params string[] sharpmakeFiles)
+        {
+            return BuildAndLoadAssembly(sharpmakeFiles, compileErrorBehavior);
         }
 
         private Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
         {
-            // Check if this is the built assembly version of .sharpmake files that is requested to be loaded
-            if (_projectAssembly != null && _projectAssembly.FullName == args.Name)
-                return _projectAssembly;
+            // Check if this is a built assembly of .sharpmake.cs files that is requested to be loaded
+            Assembly builtAssembly = null;
+            _builtAssemblies.TryGetValue(args.Name, out builtAssembly);
+            if (builtAssembly != null)
+                return builtAssembly;
 
             // Check if this is an assembly that if referenced by [module: Sharpmake.Reference("...")], is so, explicitly load it with its fullPath
             string explicitReferencesFullPath;
-            if (_referenceList.TryGetValue(args.Name, out explicitReferencesFullPath))
+            if (_references.TryGetValue(args.Name, out explicitReferencesFullPath))
                 return Assembly.LoadFrom(explicitReferencesFullPath);
 
             return null;
@@ -417,13 +470,18 @@ namespace Sharpmake
         {
             using (new Util.StopwatchProfiler(ms => { ProfileWriteLine("    |{0,5} ms| load project {1}", ms, type.Name); }))
             {
-                if (!type.IsDefined(typeof(Generate), false) &&
-                !type.IsDefined(typeof(Compile), false) &&
-                !type.IsDefined(typeof(Export), false))
+                Project.ProjectTypeAttribute projectTypeAttribute;
+                if (type.IsDefined(typeof(Generate), false))
+                    projectTypeAttribute = Project.ProjectTypeAttribute.Generate;
+                else if (type.IsDefined(typeof(Export), false))
+                    projectTypeAttribute = Project.ProjectTypeAttribute.Export;
+                else if (type.IsDefined(typeof(Compile), false))
+                    projectTypeAttribute = Project.ProjectTypeAttribute.Compile;
+                else
                     throw new Error("cannot generate project type without [Sharpmake.Generate], [Sharpmake.Compile] or [Sharpmake.Export] attribute: {0}", type.Name);
 
                 // Create the project instance
-                Project project = Project.CreateProject(type, Arguments.FragmentMasks);
+                Project project = Project.CreateProject(type, Arguments.FragmentMasks, projectTypeAttribute);
 
                 // Pre event
                 EventPreProjectConfigure?.Invoke(project);
@@ -483,6 +541,12 @@ namespace Sharpmake
 
                 return solution;
             }
+        }
+
+        internal void RegisterGeneratedProject(Project project)
+        {
+            lock (_generatedProjects)
+                _generatedProjects.Add(project);
         }
 
         private static void LogObject(TextWriter writer, string prefix, object obj)
@@ -680,37 +744,45 @@ namespace Sharpmake
             }
         }
 
-        internal class ProjectGenerationTask
+        private void DetermineUsedProjectConfigurations(List<Solution> solutions)
         {
-            internal Project _project;
-            internal Builder _builder;
+            Trace.Assert(_usedProjectConfigurations == null);
+            Trace.Assert(_linked, "This method can only be called *after* the link has occurred");
 
-            internal ProjectGenerationTask(Builder builder, Project project)
+            // if this becomes too slow, we can move the creation of the list to the tasks per solution, and group them after
+            var usedProjectConfigs = new HashSet<Project.Configuration>();
+            using (new Util.StopwatchProfiler(ms => { LogWriteLine("    figuring out used project configs took {0:0.0} sec", ms / 1000.0f); }, minThresholdMs: 100))
             {
-                _builder = builder;
-                _project = project;
+                foreach (Solution s in solutions)
+                {
+                    foreach (var pair in s.SolutionFilesMapping)
+                    {
+                        List<Solution.Configuration> configurations = pair.Value;
+                        foreach (var solutionConfig in configurations)
+                        {
+                            foreach (var includedProject in solutionConfig.IncludedProjectInfos)
+                                usedProjectConfigs.Add(includedProject.Configuration);
+                        }
+                    }
+                }
             }
 
-            internal void Generate(object parameter)
-            {
-                _builder.Generate(_project);
-            }
+            _usedProjectConfigurations = usedProjectConfigs;
         }
 
-        internal class SolutionGenerationTask
+        private void LogUnusedProjectConfigurations(List<Project> projects, List<Solution> solutions)
         {
-            internal Solution _solution;
-            internal Builder _builder;
-
-            internal SolutionGenerationTask(Builder builder, Solution solution)
+            Trace.Assert(_usedProjectConfigurations != null);
+            foreach (Project p in projects)
             {
-                _builder = builder;
-                _solution = solution;
-            }
+                if (p.SharpmakeProjectType == Project.ProjectTypeAttribute.Export)
+                    continue;
 
-            internal void Generate(object parameter)
-            {
-                _builder.Generate(_solution);
+                foreach (var conf in p.Configurations)
+                {
+                    if (!_usedProjectConfigurations.Contains(conf))
+                        LogWarningLine(conf.Project.SharpmakeCsFileName + ": Warning: Config not used during generation: " + conf.Owner.GetType().ToNiceTypeName() + ":" + conf.Target);
+                }
             }
         }
 
@@ -722,18 +794,27 @@ namespace Sharpmake
                 WriteLogs();
 
             LogWriteLine("  generating projects and solutions...");
-            using (new Util.StopwatchProfiler(ms => { LogWriteLine("    generation done done in {0:0.0} sec", ms / 1000.0f); }))
+            using (new Util.StopwatchProfiler(ms => { LogWriteLine("    generation done in {0:0.0} sec", ms / 1000.0f); }))
             {
                 var projects = new List<Project>(_projects.Values);
                 var solutions = new List<Solution>(_solutions.Values);
 
+                // Append generated projects, if any
+                projects.AddRange(_generatedProjects);
+
                 // Pre event
-                EventPreGeneration?.Invoke(projects, solutions);
+                if (EventPreGeneration != null)
+                {
+                    using (new Util.StopwatchProfiler(ms => { LogWriteLine("    pre-generation steps took {0:0.0} sec", ms / 1000.0f); }, minThresholdMs: 100))
+                        EventPreGeneration.Invoke(projects, solutions);
+                }
 
                 // start with huge solutions to balance task with small one at the end.
                 solutions.Sort((s0, s1) => s1.Configurations.Count.CompareTo(s0.Configurations.Count));
                 foreach (Solution solution in solutions)
                     Generate(solution);
+
+                DetermineUsedProjectConfigurations(solutions);
 
                 // start with huge projects to balance task with small one at the end.
                 projects.Sort((p0, p1) => p1.ProjectFilesMapping.Count.CompareTo(p0.ProjectFilesMapping.Count));
@@ -744,8 +825,14 @@ namespace Sharpmake
                     _tasks.Wait();
 
                 // Post events
-                EventPostGeneration?.Invoke(projects, solutions);
-                EventPostGenerationReport?.Invoke(projects, solutions, _generationReport);
+                if (EventPostGeneration != null || EventPostGenerationReport != null)
+                {
+                    using (new Util.StopwatchProfiler(ms => { LogWriteLine("    post-generation steps took {0:0.0} sec", ms / 1000.0f); }, minThresholdMs: 100))
+                    {
+                        EventPostGeneration?.Invoke(projects, solutions);
+                        EventPostGenerationReport?.Invoke(projects, solutions, _generationReport);
+                    }
+                }
 
                 return _generationReport;
             }
@@ -753,7 +840,7 @@ namespace Sharpmake
 
         private void GenerateSolutionFile(object arg)
         {
-            KeyValuePair<string, List<Solution.Configuration>> pair = (KeyValuePair<string, List<Solution.Configuration>>)arg;
+            var pair = (KeyValuePair<string, List<Solution.Configuration>>)arg;
             string solutionFile = pair.Key;
             List<Solution.Configuration> configurations = pair.Value;
             Solution.Configuration firstConf = configurations.FirstOrDefault();
@@ -805,7 +892,7 @@ namespace Sharpmake
 
         private void GenerateProjectFile(object arg)
         {
-            KeyValuePair<string, List<Project.Configuration>> pair = (KeyValuePair<string, List<Project.Configuration>>)arg;
+            var pair = (KeyValuePair<string, List<Project.Configuration>>)arg;
 
             string projectFile = pair.Key;
             List<Project.Configuration> configurations = pair.Value;
@@ -818,24 +905,34 @@ namespace Sharpmake
 
                 try
                 {
+                    bool generateProject = false;
+
                     DevEnv devEnv = configurations[0].Target.GetFragment<DevEnv>();
                     for (int i = 0; i < configurations.Count; ++i)
                     {
                         Project.Configuration conf = pair.Value[i];
                         if (devEnv != conf.Target.GetFragment<DevEnv>())
+                        {
                             throw new Error("Multiple generator cannot output to the same file:" + Environment.NewLine + "\tBoth {0} and {1} try to generate {2}",
                                 devEnv,
                                 conf.Target.GetFragment<DevEnv>(),
                                 projectFile);
+                        }
+
+                        if (!generateProject)
+                        {
+                            if (_usedProjectConfigurations == null ||
+                                Arguments.TypesToGenerate.Contains(project.GetType()) || // generate the project if it was explicitly queried by the user-code
+                                _usedProjectConfigurations.Contains(conf))
+                            {
+                                generateProject = true;
+                            }
+                        }
                     }
 
                     if (project.SourceFilesFilters == null || (project.SourceFilesFiltersCount != 0 && !project.SkipProjectWhenFiltersActive))
                     {
-                        if (project is CSharpProject)
-                            _getGeneratorsManagerCallBack().Generate(this, (CSharpProject)project, configurations, projectFile, output.Generated, output.Skipped);
-                        else if (project is PythonProject)
-                            _getGeneratorsManagerCallBack().Generate(this, (PythonProject)project, configurations, projectFile, output.Generated, output.Skipped);
-                        else
+                        if (generateProject)
                             _getGeneratorsManagerCallBack().Generate(this, project, configurations, projectFile, output.Generated, output.Skipped);
                     }
                 }
@@ -855,7 +952,7 @@ namespace Sharpmake
 
         private void Generate(Project project)
         {
-            if (!project.GetType().IsDefined(typeof(Generate), false))
+            if (project.SharpmakeProjectType != Project.ProjectTypeAttribute.Generate)
                 return;
 
             foreach (KeyValuePair<string, List<Project.Configuration>> pair in project.ProjectFilesMapping)
@@ -866,6 +963,80 @@ namespace Sharpmake
                     GenerateProjectFile(pair);
             }
         }
+
+        public void AddAttributeParser(ISourceAttributeParser parser)
+        {
+            _attributeParsers.Add(parser);
+        }
+
+        #region IBuilderContext
+        private class LoadInfo : ILoadInfo
+        {
+            public IAssemblyInfo AssemblyInfo { get; }
+            public Assembly Assembly { get; }
+            public IEnumerable<ISourceAttributeParser> Parsers { get; }
+
+            public LoadInfo(IAssemblyInfo assemblyInfo)
+                : this(assemblyInfo, assemblyInfo.Assembly, null)
+            { }
+            public LoadInfo(IAssemblyInfo assemblyInfo, IEnumerable<ISourceAttributeParser> parsers)
+                : this(assemblyInfo, assemblyInfo.Assembly, parsers)
+            { }
+            public LoadInfo(Assembly assembly)
+                : this(null, assembly, null)
+            { }
+            public LoadInfo(Assembly assembly, IEnumerable<ISourceAttributeParser> parsers)
+                : this(null, assembly, parsers)
+            { }
+
+            private LoadInfo(IAssemblyInfo assemblyInfo, Assembly assembly, IEnumerable<ISourceAttributeParser> parsers)
+            {
+                AssemblyInfo = assemblyInfo;
+                Assembly = assembly;
+                Parsers = parsers?.ToArray() ?? Enumerable.Empty<ISourceAttributeParser>();
+            }
+        }
+
+        private class BuilderContext : IBuilderContext
+        {
+            private readonly Builder _builder;
+
+            public BuilderCompileErrorBehavior CompileErrorBehavior { get; }
+
+            public BuilderContext(Builder builder, BuilderCompileErrorBehavior compileErrorBehavior)
+            {
+                _builder = builder;
+                CompileErrorBehavior = compileErrorBehavior;
+            }
+
+            public ILoadInfo BuildAndLoadSharpmakeFiles(IEnumerable<ISourceAttributeParser> parsers, IEnumerable<IParsingFlowParser> flowParsers, params string[] files)
+            {
+                var parserCount = _builder._attributeParsers.Count;
+                var assemblyInfo = _builder.BuildAndLoadAssembly(files, this, parsers, flowParsers);
+                if (assemblyInfo.Assembly != null)
+                    _builder.ExecuteEntryPointInAssemblies<EntryPoint>(assemblyInfo.Assembly);
+
+                return new LoadInfo(assemblyInfo, _builder._attributeParsers.Skip(parserCount));
+            }
+
+            public ILoadInfo LoadExtension(string file)
+            {
+                // Load extensions if they were passed as references (platforms,
+                // entry point execution to add new ISourceAttributeParser...)
+                using (var extensionLoader = new ExtensionLoader())
+                {
+                    var parserCount = _builder._attributeParsers.Count;
+                    var assembly = extensionLoader.LoadExtension(file, false);
+                    return new LoadInfo(assembly, _builder._attributeParsers.Skip(parserCount));
+                }
+            }
+        }
+
+        public IBuilderContext CreateContext(BuilderCompileErrorBehavior compileErrorBehavior = BuilderCompileErrorBehavior.ThrowException)
+        {
+            return new BuilderContext(this, compileErrorBehavior);
+        }
+        #endregion
 
         #region Log
 
@@ -900,6 +1071,8 @@ namespace Sharpmake
 
         internal Dictionary<Type, Project> _projects = new Dictionary<Type, Project>();
         internal Dictionary<Type, Solution> _solutions = new Dictionary<Type, Solution>();
+
+        private List<Project> _generatedProjects = new List<Project>();
 
         private bool _linked = false;
         private readonly Func<IGeneratorManager> _getGeneratorsManagerCallBack;

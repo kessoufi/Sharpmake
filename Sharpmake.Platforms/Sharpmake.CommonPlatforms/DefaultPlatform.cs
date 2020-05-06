@@ -37,21 +37,35 @@ namespace Sharpmake
         #region Project.Configuration.IConfigurationTasks implementation
         public static void SetupLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
         {
-            if (dependencySetting.HasFlag(DependencySetting.LibraryPaths))
-                configuration.DependenciesLibraryPaths.Add(dependency.TargetLibraryPath, dependency.TargetLibraryPathOrderNumber);
-
-            if (dependencySetting.HasFlag(DependencySetting.LibraryFiles))
-                configuration.DependenciesLibraryFiles.Add(dependency.TargetFileFullName, dependency.TargetFileOrderNumber);
+            if (dependency.Project.SharpmakeProjectType != Project.ProjectTypeAttribute.Export &&
+                !(configuration.IsFastBuild && !dependency.IsFastBuild))
+            {
+                if (dependencySetting.HasFlag(DependencySetting.LibraryPaths))
+                    configuration.AddDependencyBuiltTargetLibraryPath(dependency.TargetLibraryPath, dependency.TargetLibraryPathOrderNumber);
+                if (dependencySetting.HasFlag(DependencySetting.LibraryFiles))
+                    configuration.AddDependencyBuiltTargetLibraryFile(dependency.TargetFileFullName, dependency.TargetFileOrderNumber);
+            }
+            else
+            {
+                if (dependencySetting.HasFlag(DependencySetting.LibraryPaths))
+                    configuration.DependenciesOtherLibraryPaths.Add(dependency.TargetLibraryPath, dependency.TargetLibraryPathOrderNumber);
+                if (dependencySetting.HasFlag(DependencySetting.LibraryFiles))
+                    configuration.DependenciesOtherLibraryFiles.Add(dependency.TargetFileFullName, dependency.TargetFileOrderNumber);
+            }
         }
 
-        void Project.Configuration.IConfigurationTasks.SetupLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
+        void Project.Configuration.IConfigurationTasks.SetupDynamicLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
+        {
+            SetupLibraryPaths(configuration, dependencySetting, dependency);
+        }
+
+        void Project.Configuration.IConfigurationTasks.SetupStaticLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
         {
             SetupLibraryPaths(configuration, dependencySetting, dependency);
         }
 
         public string GetDefaultOutputExtension(Project.Configuration.OutputType outputType)
         {
-
             switch (outputType)
             {
                 case Project.Configuration.OutputType.Exe:
@@ -69,36 +83,38 @@ namespace Sharpmake
                     return outputType.ToString().ToLower();
             }
         }
+
+        public IEnumerable<string> GetPlatformLibraryPaths(Project.Configuration configuration)
+        {
+            yield break;
+        }
         #endregion
 
         #region IPlatformBff implementation
         public override string BffPlatformDefine => null;
-        public override string CConfigName => string.Empty;
-        public override string CppConfigName => CConfigName;
+
+        public override string CConfigName(Configuration conf)
+        {
+            return string.Empty;
+        }
+
+        public override string CppConfigName(Configuration conf)
+        {
+            return string.Empty;
+        }
 
         public override bool AddLibPrefix(Configuration conf)
         {
             return false;
         }
 
+        [Obsolete("Use " + nameof(SetupExtraLinkerSettings) + " and pass the conf")]
         public override void SetupExtraLinkerSettings(IFileGenerator fileGenerator, Project.Configuration.OutputType outputType, string fastBuildOutputFile)
         {
-            using (fileGenerator.Resolver.NewScopedParameter("dllOption", outputType == Project.Configuration.OutputType.Dll ? " /DLL" : ""))
-            {
-                fileGenerator.Write(Bff.Template.ConfigurationFile.LinkerOptions);
-            }
+            base.SetupExtraLinkerSettings(fileGenerator, outputType, fastBuildOutputFile);
         }
 
-        public override void AddCompilerSettings(IDictionary<string, CompilerSettings> masterCompilerSettings, string compilerName, string rootPath, DevEnv devEnv, string projectRootPath)
-        {
-        }
-
-        public override CompilerSettings GetMasterCompilerSettings(IDictionary<string, CompilerSettings> masterCompilerSettings, string compilerName, string rootPath, DevEnv devEnv, string projectRootPath, bool useCCompiler)
-        {
-            throw new NotImplementedException();
-        }
-
-        public override void SetConfiguration(IDictionary<string, CompilerSettings.Configuration> configurations, string compilerName, string projectRootPath, DevEnv devEnv, bool useCCompiler)
+        public override void AddCompilerSettings(IDictionary<string, CompilerSettings> masterCompilerSettings, Project.Configuration conf)
         {
         }
         #endregion

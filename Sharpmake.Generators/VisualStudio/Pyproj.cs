@@ -19,7 +19,7 @@ using Microsoft.Win32;
 
 namespace Sharpmake.Generators.VisualStudio
 {
-    public partial class Pyproj
+    public partial class Pyproj : IProjectGenerator
     {
         internal class ItemGroups
         {
@@ -72,7 +72,7 @@ namespace Sharpmake.Generators.VisualStudio
             writer.Write(resolver.Resolve(value));
         }
 
-        public void Generate(Builder builder, PythonProject project, List<Project.Configuration> configurations, string projectFile, List<string> generatedFiles, List<string> skipFiles)
+        public void Generate(Builder builder, Project project, List<Project.Configuration> configurations, string projectFile, List<string> generatedFiles, List<string> skipFiles)
         {
             _builder = builder;
 
@@ -80,7 +80,11 @@ namespace Sharpmake.Generators.VisualStudio
             string projectPath = fileInfo.Directory.FullName;
             string projectFileName = fileInfo.Name;
             bool updated;
-            string projectFileResult = Generate(project, configurations, projectPath, projectFileName, out updated);
+
+            if (!(project is PythonProject))
+                throw new ArgumentException("Project is not a PythonProject");
+
+            string projectFileResult = Generate((PythonProject)project, configurations, projectPath, projectFileName, out updated);
             if (updated)
                 generatedFiles.Add(projectFileResult);
             else
@@ -102,6 +106,7 @@ namespace Sharpmake.Generators.VisualStudio
 
             using (resolver.NewScopedParameter("guid", configurations.First().ProjectGuid))
             using (resolver.NewScopedParameter("projectHome", Util.PathGetRelative(projectPath, sourceRootPath)))
+            using (resolver.NewScopedParameter("startupFile", project.StartupFile))
             using (resolver.NewScopedParameter("searchPath", project.SearchPaths.JoinStrings(";")))
             {
                 _project = project;
@@ -115,8 +120,9 @@ namespace Sharpmake.Generators.VisualStudio
                 // xml begin header
                 Write(Template.Project.ProjectBegin, writer, resolver);
 
-                string defaultInterpreterRegisterKeyName = string.Format(@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{0}\PythonTools\Options\Interpreters",
-                    devEnvRange.MinDevEnv.GetVisualVersionString());
+                string defaultInterpreterRegisterKeyName = $@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{
+                        devEnvRange.MinDevEnv.GetVisualVersionString()
+                    }\PythonTools\Options\Interpreters";
                 var defaultInterpreter = (string)Registry.GetValue(defaultInterpreterRegisterKeyName, "DefaultInterpreter", "{}") ?? "{00000000-0000-0000-0000-000000000000}";
                 var defaultInterpreterVersion = (string)Registry.GetValue(defaultInterpreterRegisterKeyName, "DefaultInterpreterVersion", "2.7") ?? "2.7";
 
@@ -127,13 +133,32 @@ namespace Sharpmake.Generators.VisualStudio
                 {
                     if (pyEnvironment.IsActivated)
                     {
-                        string interpreterRegisterKeyName = string.Format(@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{0}\PythonTools\Interpreters\{{{1}}}",
-                            devEnvRange.MinDevEnv.GetVisualVersionString(), pyEnvironment.Guid.ToString());
+                        string interpreterRegisterKeyName =
+                            $@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{
+                                devEnvRange.MinDevEnv.GetVisualVersionString()
+                            }\PythonTools\Interpreters\{{{pyEnvironment.Guid}}}";
                         string interpreterDescription = (string)Registry.GetValue(interpreterRegisterKeyName, "Description", "");
                         if (interpreterDescription != string.Empty)
                         {
-                            currentInterpreterId = string.Format("{{{0}}}", pyEnvironment.Guid.ToString());
+                            currentInterpreterId = $"{{{pyEnvironment.Guid}}}";
                             currentInterpreterVersion = (string)Registry.GetValue(interpreterRegisterKeyName, "Version", currentInterpreterVersion);
+                        }
+                    }
+                }
+
+                foreach (PythonVirtualEnvironment virtualEnvironment in _project.VirtualEnvironments)
+                {
+                    if (virtualEnvironment.IsDefault)
+                    {
+                        string baseInterpreterRegisterKeyName =
+                            $@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{
+                                devEnvRange.MinDevEnv.GetVisualVersionString()
+                            }\PythonTools\Interpreters\{{{virtualEnvironment.BaseInterpreterGuid}}}";
+                        string baseInterpreterDescription = (string)Registry.GetValue(baseInterpreterRegisterKeyName, "Description", "");
+                        if (baseInterpreterDescription != string.Empty)
+                        {
+                            currentInterpreterId = $"{{{virtualEnvironment.Guid}}}";
+                            currentInterpreterVersion = (string)Registry.GetValue(baseInterpreterRegisterKeyName, "Version", currentInterpreterVersion);
                         }
                     }
                 }
@@ -150,9 +175,9 @@ namespace Sharpmake.Generators.VisualStudio
                 {
                     Write(Template.Project.ProjectItemGroupBegin, writer, resolver);
                     using (resolver.NewScopedParameter("name", virtualEnvironment.Name))
-                    using (resolver.NewScopedParameter("version", defaultInterpreterVersion))
+                    using (resolver.NewScopedParameter("version", currentInterpreterVersion))
                     using (resolver.NewScopedParameter("basePath", virtualEnvironment.Path))
-                    using (resolver.NewScopedParameter("baseGuid", defaultInterpreter))
+                    using (resolver.NewScopedParameter("baseGuid", virtualEnvironment.BaseInterpreterGuid))
                     using (resolver.NewScopedParameter("guid", virtualEnvironment.Guid))
                     {
                         Write(Template.Project.VirtualEnvironmentInterpreter, writer, resolver);
@@ -166,13 +191,15 @@ namespace Sharpmake.Generators.VisualStudio
                     foreach (PythonEnvironment pyEnvironment in _project.Environments)
                     {
                         // Verify if the interpreter exists in the register.
-                        string interpreterRegisterKeyName = string.Format(@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{0}\PythonTools\Interpreters\{{{1}}}",
-                            devEnvRange.MinDevEnv.GetVisualVersionString(), pyEnvironment.Guid.ToString());
+                        string interpreterRegisterKeyName =
+                            $@"HKEY_CURRENT_USER\Software\Microsoft\VisualStudio\{
+                                devEnvRange.MinDevEnv.GetVisualVersionString()
+                            }\PythonTools\Interpreters\{{{pyEnvironment.Guid}}}";
                         string interpreterDescription = (string)Registry.GetValue(interpreterRegisterKeyName, "Description", "");
                         if (interpreterDescription != string.Empty)
                         {
                             string interpreterVersion = (string)Registry.GetValue(interpreterRegisterKeyName, "Version", currentInterpreterVersion);
-                            using (resolver.NewScopedParameter("guid", string.Format("{{{0}}}", pyEnvironment.Guid.ToString())))
+                            using (resolver.NewScopedParameter("guid", $"{{{pyEnvironment.Guid}}}"))
                             using (resolver.NewScopedParameter("version", interpreterVersion))
                             {
                                 Write(Template.Project.InterpreterReference, writer, resolver);
@@ -180,7 +207,7 @@ namespace Sharpmake.Generators.VisualStudio
                         }
                     }
                 }
-                else // Set the default interpreter
+                else if (_project.VirtualEnvironments.Count == 0) // Set the default interpreter
                 {
                     using (resolver.NewScopedParameter("guid", currentInterpreterId))
                     using (resolver.NewScopedParameter("version", currentInterpreterVersion))

@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Sharpmake.Application
 {
@@ -29,7 +31,8 @@ namespace Sharpmake.Application
                 { }
 
                 protected Error(SerializationInfo info, StreamingContext context)
-                    : base(info, context) { }
+                    : base(info, context)
+                { }
             }
 
             public enum InputType
@@ -41,6 +44,7 @@ namespace Sharpmake.Application
 
             public string[] Sources = new string[0];
             public string[] Assemblies = new string[0];
+            public HashSet<string> Defines = new HashSet<string>();
             public InputType Input = InputType.Undefined;
             public bool Exit = false;
             public bool BlobOnly = false;
@@ -55,11 +59,13 @@ namespace Sharpmake.Application
             private bool _testOptionValid = true;
             public bool ProfileOutput = false;
             internal TestOptions TestOption;
+            internal bool RegressionDiff = true;
             public DirectoryInfo OutputDirectory;
             public DirectoryInfo ReferenceDirectory;
             public DirectoryInfo RemapRoot;
             public string MutexSuffix = string.Empty;
             public bool GenerateDebugSolution = false;
+            public string DebugSolutionStartArguments = string.Empty;
 
             [CommandLine.Option("sources", @"sharpmake sources files: ex: /sources( ""project1.sharpmake"", ""..\..\project2.sharpmake"" )")]
             public void SetSources(params string[] files)
@@ -75,6 +81,15 @@ namespace Sharpmake.Application
                 Assemblies = ValidateFiles(files);
                 DebugWriteLine("input assemblies: ");
                 Array.ForEach(Assemblies, (string assembly) => DebugWriteLine("  " + assembly));
+            }
+
+            [CommandLine.Option("defines", @"sharpmake compilation defines: ex: /defines( ""SHARPMAKE_0_8_0"", ""GITLAB"" )")]
+            public void SetDefines(params string[] defines)
+            {
+                Defines = ValidateDefines(defines);
+                DebugWriteLine("compilation defines: ");
+                foreach (string define in Defines)
+                    DebugWriteLine("  " + define);
             }
 
             [CommandLine.Option("projectlogfiles", @"log files contained in a project for debug purpose: ex: /projectlogfiles( ""s:\p4\ac\dev\sharpmake\projects\win32\system\system.vcproj"" )")]
@@ -151,13 +166,19 @@ namespace Sharpmake.Application
             }
 
             [CommandLine.Option("test", @"Validates .sharpmake input so it respect a minimal coding standard.
-Regression: tests if the dir provided in ouput is equal to the reference dir after a generation. returns -1 if different
+Regression: tests if the dir provided in output is equal to the reference dir after a generation. returns -1 if different
 QuickConfigure: tests if the configure methods are reversible. returns -1 if it is not reversible
 Configure: tests if the configure methods are reversible, track the problems. return -1 if it is not reversible
 (validates configure order): ex: /test(<""Regression""|""QuickConfigure""|""Configure"">)")]
             public void CommandLineStrict(string option)
             {
                 _testOptionValid = Enum.TryParse(option, out TestOption);
+            }
+
+            [CommandLine.Option("regressionDiff", @"Use diff tool if found to show regression differences (enabled by default): ex: /regressionDiff(<true|false>)")]
+            public void CommandLineRegressionDiff(bool value)
+            {
+                RegressionDiff = value;
             }
 
             [CommandLine.Option("writefiles", @"Sets if the generated files should be written or not. Default value: true. ex: /writefiles(<true|false>)")]
@@ -203,7 +224,7 @@ ex: /remaproot(""C:\p4ws\projectRoot\"")")]
 
             [CommandLine.Option("fakesourcedirfile", @"path to a file containing the list of files in the source tree
 This list will be used instead of the real source path
-ex: /fakesourcedirfile( ""files.txt"", ")]
+ex: /fakesourcedirfile( ""files.txt"" ")]
             public void CommandLineFakeSourceDirFile(string fakeSourceDirFile)
             {
                 string fakeSourceDirFileFullPath = Path.GetFullPath(fakeSourceDirFile);
@@ -239,8 +260,9 @@ ex: /fakesourcedirfile( ""files.txt"", ")]
                                     bool success = uint.TryParse(splitLine[4], out attributes);
                                     if (success && (attributes & 0x10) != 0x10) // 16 is directory
                                     {
-                                        string filePath = Util.PathMakeStandard(splitLine[0].Substring(folder.Length + 1).TrimEnd('"'));
-                                        Util.AddNewFakeFile(filePath, 0);
+                                        string filePath = splitLine[0].Substring(folder.Length + 1).TrimEnd('"');
+                                        int size;
+                                        Util.AddNewFakeFile(filePath, int.TryParse(splitLine[1], out size) ? size : 0);
                                     }
                                 }
                                 line = projectFileStream.ReadLine();
@@ -287,6 +309,29 @@ ex: /fakesourcedirfile( ""files.txt"", ")]
                 GenerateDebugSolution = true;
             }
 
+            [CommandLine.Option("debugSolutionStartArguments", @"Adds arguments to the debug commandline 
+of the project generated by /generateDebugSolution. ex: /debugSolutionStartArguments(""/diagnostics"")")]
+            public void CommandLineDebugSolutionStartArguments(string arguments)
+            {
+                DebugSolutionStartArguments = arguments;
+            }
+
+            [CommandLine.Option("forcecleanup", @"Path to an autocleanup db.
+If this is set, all the files listed in the DB will be removed, and sharpmake will exit.
+ex: /forcecleanup( ""tmp/sharpmakeautocleanupdb.bin"" ")]
+            public void CommandLineForceCleanup(string autocleanupDb)
+            {
+                if (!File.Exists(autocleanupDb))
+                    throw new FileNotFoundException(autocleanupDb);
+
+                Util.s_forceFilesCleanup = true;
+                Util.s_overrideFilesAutoCleanupDBPath = autocleanupDb;
+
+                Util.ExecuteFilesAutoCleanup();
+
+                Exit = true;
+            }
+
             public void Validate()
             {
                 if (Assemblies.Length == 0 && Sources.Length == 0)
@@ -330,6 +375,23 @@ ex: /fakesourcedirfile( ""files.txt"", ")]
                         throw new Error("error: input file not found: {0}", files[i]);
                 }
                 return fullPathFiles;
+            }
+
+            // Will check that the given compilation defines are valid
+            public static HashSet<string> ValidateDefines(string[] defines)
+            {
+                Regex defineValidationRegex = new Regex(@"^\w+$");
+
+                HashSet<string> uniqueDefines = new HashSet<string>();
+                foreach (string define in defines)
+                {
+                    if (!defineValidationRegex.IsMatch(define))
+                        throw new Error("error: invalid define '{0}', a define must be a single word", define);
+                    if (uniqueDefines.Contains(define))
+                        throw new Error("error: define '{0}' already defined", define);
+                    uniqueDefines.Add(define);
+                }
+                return uniqueDefines;
             }
         }
     }

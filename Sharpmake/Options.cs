@@ -52,6 +52,34 @@ namespace Sharpmake
             public string Value { get; }
         }
 
+        /// <summary>
+        /// Used to hold an option that's a path, either to a file or directory, that's gonna be resolved
+        /// </summary>
+        public abstract class PathOption
+        {
+            public static string Get<T>(Project.Configuration conf, string fallback = RemoveLineTag, string rootpath = null)
+                where T : PathOption
+            {
+                var option = Options.GetObject<T>(conf);
+                if (option == null)
+                {
+                    return fallback;
+                }
+                if (!string.IsNullOrEmpty(rootpath))
+                {
+                    return Util.PathGetRelative(rootpath, option.Path, true);
+                }
+                return option.Path;
+            }
+
+            protected PathOption(string path)
+            {
+                Path = path;
+            }
+
+            public string Path;
+        }
+
         public abstract class IntOption
         {
             public static string Get<T>(Project.Configuration conf)
@@ -67,6 +95,32 @@ namespace Sharpmake
             }
 
             public int Value { get; }
+        }
+
+        internal class ScopedOption : IDisposable
+        {
+            private Dictionary<string, string> _options;
+            private string _name = null;
+            private bool _existed = false;
+            private string _previousValue = null;
+
+            public ScopedOption(Dictionary<string, string> options, string name, string value)
+            {
+                _name = name;
+                _options = options;
+
+                if (_options.TryGetValue(_name, out _previousValue))
+                    _existed = true;
+                _options[_name] = value;
+            }
+
+            public void Dispose()
+            {
+                if (_existed)
+                    _options[_name] = _previousValue;
+                else
+                    _options.Remove(_name);
+            }
         }
 
         public class ExplicitOptions : Dictionary<string, string>
@@ -274,7 +328,7 @@ namespace Sharpmake
             }
         }
 
-        public static Strings GetStrings<T>(Configuration conf)
+        public static Strings GetStrings<T>(Configuration conf) where T : Strings
         {
             List<object> options = conf.Options;
             Strings values = new Strings();
@@ -289,7 +343,7 @@ namespace Sharpmake
             return values;
         }
 
-        public static string GetString<T>(Configuration conf)
+        public static string GetString<T>(Configuration conf) where T : StringOption
         {
             List<object> options = conf.Options;
 

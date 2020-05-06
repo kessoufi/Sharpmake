@@ -20,41 +20,98 @@ using System.Reflection;
 
 namespace Sharpmake
 {
-    // Mandatory
+    /// <summary>
+    /// The development environments supported by Sharpmake generators.
+    /// </summary>
+    /// <remarks>
+    /// This fragment is mandatory in every target.
+    /// </remarks>
     [Fragment, Flags]
     public enum DevEnv
     {
+        /// <summary>
+        /// Visual Studio 2010.
+        /// </summary>
         vs2010 = 1 << 0,
+
+        /// <summary>
+        /// Visual Studio 2012
+        /// </summary>
         vs2012 = 1 << 1,
+
+        /// <summary>
+        /// Visual Studio 2013
+        /// </summary>
         vs2013 = 1 << 2,
+
+        /// <summary>
+        /// Visual Studio 2015
+        /// </summary>
         vs2015 = 1 << 3,
+
+        /// <summary>
+        /// Visual Studio 2017
+        /// </summary>
         vs2017 = 1 << 4,
-        xcode4ios = 1 << 5,
-        eclipse = 1 << 6,
-        make = 1 << 7
+
+        /// <summary>
+        /// Visual Studio 2019
+        /// </summary>
+        vs2019 = 1 << 5,
+
+        /// <summary>
+        /// iOS project with Xcode.
+        /// </summary>
+        xcode4ios = 1 << 6,
+
+        /// <summary>
+        /// Eclipse.
+        /// </summary>
+        eclipse = 1 << 7,
+
+        /// <summary>
+        /// GNU Makefiles.
+        /// </summary>
+        make = 1 << 8,
+
+        /// <summary>
+        /// All supported Visual Studio versions.
+        /// </summary>
+        [CompositeFragment]
+        VisualStudio = vs2010 | vs2012 | vs2013 | vs2015 | vs2017 | vs2019
     }
 
     // Mandatory
     [Fragment, Flags]
     public enum Platform
     {
-        win32 = 1 << 0,
-        win64 = 1 << 1,
-        x360 = 1 << 4,
-        ps3 = 1 << 5,
-        ps3spu = 1 << 6,
-        durango = 1 << 7,
-        orbis = 1 << 8,
-        wiiu = 1 << 9,
-        anycpu = 1 << 10,
-        wii = 1 << 11,
-        ctr = 1 << 12,
-        ios = 1 << 13,
-        android = 1 << 14,
-        nx = 1 << 15,
-        nvshield = 1 << 16,
-        linux = 1 << 17,
-        mac = 1 << 18
+        win32      = 1 << 0,
+        win64      = 1 << 1,
+        anycpu     = 1 << 2,
+        x360       = 1 << 3,
+        durango    = 1 << 4,
+        ps3        = 1 << 5,
+        ps3spu     = 1 << 6,
+        orbis      = 1 << 7,
+        wii        = 1 << 8,
+        wiiu       = 1 << 9,
+        nx         = 1 << 10,
+        nvshield   = 1 << 11,
+        ctr        = 1 << 12,
+        ios        = 1 << 13,
+        android    = 1 << 14,
+        linux      = 1 << 15,
+        mac        = 1 << 16,
+
+        _reserved9 = 1 << 22,
+        _reserved8 = 1 << 23,
+        _reserved7 = 1 << 24,
+        _reserved6 = 1 << 25,
+        _reserved5 = 1 << 26,
+        _reserved4 = 1 << 27,
+        _reserved3 = 1 << 28,
+        _reserved2 = 1 << 29,
+        _reserved1 = 1 << 30,
     }
 
     [Fragment, Flags]
@@ -94,6 +151,19 @@ namespace Sharpmake
         v4_6 = 1 << 9,
         v4_6_1 = 1 << 10,
         v4_6_2 = 1 << 11,
+        v4_7 = 1 << 12,
+        v4_7_1 = 1 << 13,
+        v4_7_2 = 1 << 14,
+        netcore1_0 = 1 << 15,
+        netcore1_1 = 1 << 16,
+        netcore2_0 = 1 << 17,
+        netcore2_1 = 1 << 18,
+        netcore2_2 = 1 << 19,
+        netcore3_0 = 1 << 20,
+        netcore3_1 = 1 << 21,
+
+        [CompositeFragment]
+        all_netcore = netcore1_0 | netcore1_1 | netcore2_0 | netcore2_1 | netcore3_0 | netcore3_1
     }
 
     // Optional
@@ -117,135 +187,6 @@ namespace Sharpmake
         KitsRoot10
     }
 
-    public class KitsRootPaths
-    {
-        private static Dictionary<DevEnv, KitsRootEnum> s_defaultKitsRootForDevEnv = new Dictionary<DevEnv, KitsRootEnum>();
-        private static Dictionary<KitsRootEnum, string> s_defaultKitsRoots = new Dictionary<KitsRootEnum, string>();
-
-        private static Dictionary<DevEnv, KitsRootEnum> s_useKitsRootForDevEnv = new Dictionary<DevEnv, KitsRootEnum>();
-        private static Dictionary<KitsRootEnum, string> s_kitsRoots = new Dictionary<KitsRootEnum, string>();
-
-        private static Dictionary<DotNetFramework, string> s_netFxKitsDir = new Dictionary<DotNetFramework, string>();
-
-        public static Options.Vc.General.WindowsTargetPlatformVersion WindowsTargetPlatformVersion { get; private set; } = Options.Vc.General.WindowsTargetPlatformVersion.v8_1;
-
-        private static KitsRootPaths s_kitsRootsInstance = new KitsRootPaths();
-
-        public KitsRootPaths()
-        {
-            string kitsRegistryKeyString = string.Format(@"SOFTWARE{0}\Microsoft\Windows Kits\Installed Roots",
-                Environment.Is64BitProcess ? @"\Wow6432Node" : string.Empty);
-
-            s_defaultKitsRoots[KitsRootEnum.KitsRoot] = Util.GetRegistryLocalMachineSubKeyValue(kitsRegistryKeyString, KitsRootEnum.KitsRoot.ToString(), @"C:\Program Files (x86)\Windows Kits\8.0\");
-            s_defaultKitsRoots[KitsRootEnum.KitsRoot81] = Util.GetRegistryLocalMachineSubKeyValue(kitsRegistryKeyString, KitsRootEnum.KitsRoot81.ToString(), @"C:\Program Files (x86)\Windows Kits\8.1\");
-            s_defaultKitsRoots[KitsRootEnum.KitsRoot10] = Util.GetRegistryLocalMachineSubKeyValue(kitsRegistryKeyString, KitsRootEnum.KitsRoot10.ToString(), @"C:\Program Files (x86)\Windows Kits\10\");
-
-            string netFXSdkRegistryKeyString = string.Format(@"SOFTWARE{0}\Microsoft\Microsoft SDKs\NETFXSDK",
-                Environment.Is64BitProcess ? @"\Wow6432Node" : string.Empty);
-            s_netFxKitsDir[DotNetFramework.v4_6] = Util.GetRegistryLocalMachineSubKeyValue(netFXSdkRegistryKeyString + @"\" + DotNetFramework.v4_6.ToVersionString(), "KitsInstallationFolder", @"C:\Program Files (x86)\Windows Kits\NETFXSDK\4.6\");
-            s_netFxKitsDir[DotNetFramework.v4_6_1] = Util.GetRegistryLocalMachineSubKeyValue(netFXSdkRegistryKeyString + @"\" + DotNetFramework.v4_6_1.ToVersionString(), "KitsInstallationFolder", @"C:\Program Files (x86)\Windows Kits\NETFXSDK\4.6.1\");
-
-            s_defaultKitsRootForDevEnv[DevEnv.vs2012] = KitsRootEnum.KitsRoot;
-            s_defaultKitsRootForDevEnv[DevEnv.vs2013] = KitsRootEnum.KitsRoot81;
-            s_defaultKitsRootForDevEnv[DevEnv.vs2015] = KitsRootEnum.KitsRoot81;
-            s_defaultKitsRootForDevEnv[DevEnv.vs2017] = KitsRootEnum.KitsRoot10;
-        }
-
-        public static string GetRoot(KitsRootEnum kitsRoot)
-        {
-            if (s_kitsRootsInstance == null)
-                throw new Error();
-
-            if (s_kitsRoots.ContainsKey(kitsRoot))
-                return s_kitsRoots[kitsRoot];
-
-            if (s_defaultKitsRoots.ContainsKey(kitsRoot))
-                return s_defaultKitsRoots[kitsRoot];
-
-            throw new NotImplementedException("No Root associated with " + kitsRoot.ToString());
-        }
-
-        public static string GetDefaultRoot(KitsRootEnum kitsRoot)
-        {
-            if (s_kitsRootsInstance == null)
-                throw new Error();
-
-            if (s_defaultKitsRoots.ContainsKey(kitsRoot))
-                return s_defaultKitsRoots[kitsRoot];
-
-            throw new NotImplementedException("No DefaultKitsRoots associated with " + kitsRoot.ToString());
-        }
-
-        public static void SetRoot(KitsRootEnum kitsRoot, string kitsRootPath)
-        {
-            s_kitsRoots[kitsRoot] = kitsRootPath;
-        }
-
-        public static KitsRootEnum GetUseKitsRootForDevEnv(DevEnv devEnv)
-        {
-            if (s_useKitsRootForDevEnv.ContainsKey(devEnv))
-                return s_useKitsRootForDevEnv[devEnv];
-
-            if (s_defaultKitsRootForDevEnv.ContainsKey(devEnv))
-                return s_defaultKitsRootForDevEnv[devEnv];
-
-            throw new NotImplementedException("No UseKitsRoot associated with " + devEnv.ToString());
-        }
-
-        public static bool IsDefaultKitRootPath(DevEnv devEnv)
-        {
-            KitsRootEnum kitsRoot = GetUseKitsRootForDevEnv(devEnv);
-            return GetDefaultRoot(kitsRoot) == GetRoot(kitsRoot);
-        }
-
-        public static void SetUseKitsRootForDevEnv(DevEnv devEnv, KitsRootEnum kitsRoot, Options.Vc.General.WindowsTargetPlatformVersion? windowsTargetPlatformVersion = null)
-        {
-            s_useKitsRootForDevEnv[devEnv] = kitsRoot;
-            switch (kitsRoot)
-            {
-                case KitsRootEnum.KitsRoot:
-                    if (windowsTargetPlatformVersion.HasValue)
-                        throw new Error("Unsupported setting: WindowsTargetPlatformVersion is not customizable for KitsRoot 8.0.");
-                    break;
-                case KitsRootEnum.KitsRoot81:
-                    if (windowsTargetPlatformVersion.HasValue && windowsTargetPlatformVersion.Value != Options.Vc.General.WindowsTargetPlatformVersion.v8_1)
-                        throw new Error("Unsupported setting: WindowsTargetPlatformVersion is not customizable for KitsRoot 8.1. Redundant setting will be discarded");
-                    break;
-                case KitsRootEnum.KitsRoot10:
-                    if (!windowsTargetPlatformVersion.HasValue)
-                        windowsTargetPlatformVersion = Options.Vc.General.WindowsTargetPlatformVersion.v10_0_10586_0;
-
-                    if (windowsTargetPlatformVersion.Value == Options.Vc.General.WindowsTargetPlatformVersion.v8_1)
-                        throw new Error("Inconsistent values detected: KitsRoot10 set for " + devEnv + ", but windowsTargetPlatform is set to 8.1");
-
-                    WindowsTargetPlatformVersion = windowsTargetPlatformVersion.Value;
-                    break;
-            }
-        }
-
-        public static string GetWindowsTargetPlatformVersion()
-        {
-            switch (WindowsTargetPlatformVersion)
-            {
-                case Options.Vc.General.WindowsTargetPlatformVersion.v8_1: return "8.1";
-                case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_10240_0: return "10.0.10240.0";
-                case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_10586_0: return "10.0.10586.0";
-                case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_14393_0: return "10.0.14393.0";
-                case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_15063_0: return "10.0.15063.0";
-                default:
-                    throw new ArgumentOutOfRangeException("WindowsTargetPlatformVersion");
-            }
-        }
-
-        public static string GetNETFXKitsDir(DotNetFramework dotNetFramework)
-        {
-            if (s_netFxKitsDir.ContainsKey(dotNetFramework))
-                return s_netFxKitsDir[dotNetFramework];
-
-            throw new NotImplementedException("No NETFXKitsDir associated with " + dotNetFramework.ToString());
-        }
-    }
-
     // Default Target, user may define its own if needed
     public class Target : ITarget
     {
@@ -255,6 +196,7 @@ namespace Sharpmake
         public DevEnv DevEnv;
         public OutputType OutputType;
         public DotNetFramework Framework;
+        public string FrameworkFolder { get { return Framework.ToFolderName(); } }
         public Blob Blob;
 
         public override string Name
@@ -296,7 +238,22 @@ namespace Sharpmake
         public string GetTargetString()
         {
             FieldInfo[] fieldInfos = GetFragmentFieldInfo();
-            string result = String.Join("_", fieldInfos.Select(f => s_cachedFieldValueToString.GetOrAdd(f.GetValue(this), value => value.ToString())).ToArray());
+
+            var fieldInfoValues = fieldInfos.Select(f => f.GetValue(this));
+            var nonZeroValues = fieldInfoValues.Where(f => ((int)f) != 0);
+            string result = string.Join(
+                "_",
+                nonZeroValues.Select(f => s_cachedFieldValueToString.GetOrAdd(f, value =>
+                {
+                    if (value is Platform)
+                    {
+                        var platform = (Platform)value;
+                        if (platform >= Platform._reserved9)
+                            return Util.GetPlatformString(platform, null, this).ToLower();
+                    }
+                    return value.ToString();
+                }))
+            );
             return result;
         }
 
@@ -345,11 +302,13 @@ namespace Sharpmake
 
         public int CompareTo(ITarget other)
         {
-            if (GetType() != other.GetType())
+            var thisType = GetType();
+            var otherType = other.GetType();
+            if (thisType != otherType)
             {
-                int cmp = GetType().FullName.CompareTo(other.GetType().FullName);
+                int cmp = string.Compare(thisType.FullName, otherType.FullName, StringComparison.Ordinal);
                 if (cmp == 0)
-                    throw new Exception("Two different types cannot have same name: " + GetType().FullName);
+                    throw new Exception("Two different types cannot have same name: " + thisType.FullName);
                 return cmp;
             }
 
@@ -359,7 +318,7 @@ namespace Sharpmake
             if (other._valueCache == null)
                 other._valueCache = other.GetTargetString();
 
-            return _valueCache.CompareTo(other._valueCache);
+            return string.Compare(_valueCache, other._valueCache, StringComparison.Ordinal);
         }
 
 
@@ -392,36 +351,39 @@ namespace Sharpmake
         public T GetFragment<T>()
         {
             FieldInfo[] fragments = GetType().GetFields();
+            var tType = typeof(T);
             foreach (FieldInfo fragment in fragments)
             {
-                if (fragment.FieldType == typeof(T))
+                if (tType.IsAssignableFrom(fragment.FieldType))
                 {
                     return (T)fragment.GetValue(this);
                 }
             }
-            throw new Exception("cannot find fragment value of type " + typeof(T).FullName + " in object " + GetType().FullName);
+            throw new Exception("cannot find fragment value of type " + tType.FullName + " in object " + GetType().FullName);
         }
 
         public void SetFragment<T>(T value)
         {
             FieldInfo[] fragments = GetType().GetFields();
+            var valueType = value.GetType();
             foreach (FieldInfo fragment in fragments)
             {
-                if (fragment.FieldType == typeof(T))
+                if (fragment.FieldType.IsAssignableFrom(valueType))
                 {
                     fragment.SetValue(this, value);
                     return;
                 }
             }
-            throw new Exception("cannot find fragment value of type " + typeof(T).FullName + " in object " + GetType().FullName);
+            throw new Exception("cannot find fragment value of type " + valueType.FullName + " in object " + GetType().FullName);
         }
 
         public bool TestFragment<T>(T value)
         {
             FieldInfo[] fragments = GetType().GetFields();
+            var valueType = value.GetType();
             foreach (FieldInfo fragment in fragments)
             {
-                if (fragment.FieldType == typeof(T))
+                if (valueType.IsAssignableFrom(fragment.FieldType))
                     return Util.FlagsTest<T>((T)fragment.GetValue(this), value);
             }
             return false;
@@ -430,12 +392,8 @@ namespace Sharpmake
         public bool HaveFragment<T>()
         {
             FieldInfo[] fragments = GetType().GetFields();
-            foreach (FieldInfo fragment in fragments)
-            {
-                if (fragment.FieldType == typeof(T))
-                    return true;
-            }
-            return false;
+            var tType = typeof(T);
+            return fragments.Any(fragment => fragment.FieldType == tType);
         }
 
         public void SetFragments(params object[] values)
@@ -464,13 +422,14 @@ namespace Sharpmake
         {
             FieldInfo[] fragmentFields = GetType().GetFields();
 
+            var fragmentMaskType = fragmentMask.GetType();
             foreach (FieldInfo fragmentField in fragmentFields)
             {
-                if (fragmentField.FieldType == fragmentMask.GetType())
+                if (fragmentMaskType.IsAssignableFrom(fragmentField.FieldType))
                 {
                     int targetValue = (int)fragmentField.GetValue(this);
                     int maskValue = (int)fragmentMask;
-                    if ((targetValue & maskValue) != targetValue)
+                    if ((targetValue == 0) || (targetValue & maskValue) != targetValue)
                     {
                         return false;
                     }
@@ -536,7 +495,7 @@ namespace Sharpmake
                         if (field.FieldType.IsDefined(typeof(Fragment), false))
                             results.Add(field);
                     }
-                    results.Sort((l, r) => l.FieldType.FullName.CompareTo(r.FieldType.FullName));
+                    results.Sort((l, r) => string.Compare(l.FieldType.FullName, r.FieldType.FullName, StringComparison.Ordinal));
 
                     return results.ToArray();
                 });
@@ -625,8 +584,12 @@ namespace Sharpmake
 
                 for (int i = 0; i < enumFields.Length; ++i)
                 {
-                    // GetFields() does not gurantee order; filter out the enum's special name field
+                    // GetFields() does not guarantee order; filter out the enum's special name field
                     if (enumFields[i].Attributes.HasFlag(FieldAttributes.SpecialName))
+                        continue;
+
+                    // combinations of fragments are not actual fragments so skip them
+                    if (enumFields[i].GetCustomAttribute<CompositeFragmentAttribute>() != null)
                         continue;
 
                     int enumFieldValue = (int)enumFields[i].GetRawConstantValue();
@@ -643,7 +606,7 @@ namespace Sharpmake
                     {
                         for (int j = 0; j < enumFields.Length; ++j)
                         {
-                            // GetFields() does not gurantee order; filter out the enum's special name field
+                            // GetFields() does not guarantee order; filter out the enum's special name field
                             if (enumFields[j].Attributes.HasFlag(FieldAttributes.SpecialName))
                                 continue;
 
@@ -665,7 +628,6 @@ namespace Sharpmake
                         }
                     }
                 }
-
 
                 fragmentsType.Add(field.FieldType);
             }
@@ -738,6 +700,34 @@ namespace Sharpmake
             }
         }
 
+        /// <summary>
+        /// The global fragment mask will add the mask or and it with previously existing masks
+        /// </summary>
+        /// <param name="masks"></param>
+        internal void SetGlobalFragmentMask(params object[] masks)
+        {
+            foreach (var mask in masks)
+            {
+                Type maskType = mask.GetType();
+                ITarget.ValidFragmentType(maskType);
+
+                List<int> maskValues;
+                if (_fragmentMasks == null || !_fragmentMasks.TryGetValue(maskType, out maskValues))
+                {
+                    if (_fragmentMasks == null)
+                        _fragmentMasks = new Dictionary<Type, List<int>>();
+
+                    maskValues = new List<int> { (int)mask };
+                    _fragmentMasks.Add(maskType, maskValues);
+                }
+                else
+                {
+                    for (int i = 0; i < maskValues.Count; ++i)
+                        maskValues[i] &= (int)mask;
+                }
+            }
+        }
+
         internal void ClearTargets()
         {
             _targetPossibilities.Clear();
@@ -749,12 +739,21 @@ namespace Sharpmake
 
             var fragments = TargetType.GetFields();
 
-            var cachedPossibilities = _targetPossibilities.Select(tp =>
+            var selectCP = _targetPossibilities.Select(tp =>
             {
-                var cachedPossibility = fragments.Select(f => BuildFilteredFragmentMask(f, (int)f.GetValue(tp))).ToArray();
+                var tuples = fragments.Select(f =>
+                {
+                    int value = (int)f.GetValue(tp);
+                    return Tuple.Create(value, BuildFilteredFragmentMask(f, value));
+                });
+                var filtered = tuples.Where(f =>
+                {
+                    return f.Item1 == 0 || f.Item2 != 0;
+                });
+                var cachedPossibility = filtered.Select(f => f.Item2).ToArray();
                 return cachedPossibility;
-            })
-            .Where(x => x.All(y => y != 0)) // Filtered out by the _fragmentMasks
+            });
+            var cachedPossibilities = selectCP.Where(f => f.Length == fragments.Length) // Filtered out by the _fragmentMasks
             .ToArray();
 
             //int[] masks;
@@ -766,7 +765,7 @@ namespace Sharpmake
                 bool configValid = IncrementCurrent(fragments, cachedPossibility, current);
                 while (configValid)
                 {
-                    GenerateConfiguration(fragments, current.Cast<int>().ToArray());
+                    GenerateConfiguration(fragments, current);
                     configValid = IncrementCurrent(fragments, cachedPossibility, current);
                 }
             }
@@ -774,14 +773,14 @@ namespace Sharpmake
 
         private readonly Dictionary<string, ITarget> _addedTargets = new Dictionary<string, ITarget>();
 
-        private void GenerateConfiguration(FieldInfo[] fragments, int[] current)
+        private void GenerateConfiguration(FieldInfo[] fragments, int?[] current)
         {
             ITarget target = Activator.CreateInstance(TargetType) as ITarget;
 
             for (int i = 0; i < fragments.Length; ++i)
-                fragments[i].SetValue(target, current[i]);
+                fragments[i].SetValue(target, current[i] ?? 0);
 
-            string targetKey = target.GetType().FullName + "__" + target;
+            string targetKey = target.GetType().FullName + "__" + target.GetTargetString();
             if (!_addedTargets.ContainsKey(targetKey))
             {
                 _addedTargets.Add(targetKey, target);
@@ -789,7 +788,7 @@ namespace Sharpmake
             }
         }
 
-        private int BuildFilteredFragmentMask(FieldInfo fragment, int optionalMask = int.MaxValue)
+        private int BuildFilteredFragmentMask(FieldInfo fragment, int optionalMask)
         {
             int mask = 0;
 
@@ -798,7 +797,7 @@ namespace Sharpmake
 
             foreach (FieldInfo enumField in enumFields)
             {
-                // GetFields() does not gurantee order; filter out the enum's special name field
+                // GetFields() does not guarantee order; filter out the enum's special name field
                 if (enumField.Attributes.HasFlag(FieldAttributes.SpecialName))
                     continue;
 
@@ -891,8 +890,8 @@ namespace Sharpmake
                         for (int k = j + 1; k < fragments.Length; ++k)
                         {
                             nextState = GetNextBit(null, masks[k], out next);
-                            Trace.Assert(nextState == NextBitState.Initialized);
-                            current[k] = next;
+                            if (nextState == NextBitState.Initialized)
+                                current[k] = next;
                         }
                     }
 
@@ -932,6 +931,12 @@ namespace Sharpmake
             MinDevEnv = minDevEnv;
             MaxDevEnv = maxDevEnv;
         }
+
+        public bool Contains(DevEnv devEnv)
+        {
+            return (MinDevEnv <= devEnv) && (devEnv <= MaxDevEnv);
+        }
+
         public DevEnv MinDevEnv;
         public DevEnv MaxDevEnv;
     }

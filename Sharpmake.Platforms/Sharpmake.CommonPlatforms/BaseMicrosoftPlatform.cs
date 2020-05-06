@@ -11,14 +11,17 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 using System;
 using System.Collections.Generic;
+using System.IO;
+using Sharpmake.Generators;
 using Sharpmake.Generators.FastBuild;
 using Sharpmake.Generators.VisualStudio;
 
 namespace Sharpmake
 {
-    public abstract class BaseMicrosoftPlatform
+    public abstract partial class BaseMicrosoftPlatform
         : BasePlatform
         , Project.Configuration.IConfigurationTasks
         , IMicrosoftPlatformBff
@@ -32,7 +35,12 @@ namespace Sharpmake
         #endregion
 
         #region Project.Configuration.IConfigurationTasks implementation
-        public void SetupLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
+        public void SetupDynamicLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
+        {
+            DefaultPlatform.SetupLibraryPaths(configuration, dependencySetting, dependency);
+        }
+
+        public void SetupStaticLibraryPaths(Project.Configuration configuration, DependencySetting dependencySetting, Project.Configuration dependency)
         {
             DefaultPlatform.SetupLibraryPaths(configuration, dependencySetting, dependency);
         }
@@ -56,17 +64,75 @@ namespace Sharpmake
                     return outputType.ToString().ToLower();
             }
         }
+
+        public virtual IEnumerable<string> GetPlatformLibraryPaths(Project.Configuration configuration)
+        {
+            var dirs = new List<string>();
+            var dotnet = Util.IsDotNet(configuration) ? configuration.Target.GetFragment<DotNetFramework>() : default(DotNetFramework?);
+            string platformDirsStr = configuration.Target.GetFragment<DevEnv>().GetWindowsLibraryPath(configuration.Target.GetPlatform(), dotnet);
+            dirs.AddRange(EnumerateSemiColonSeparatedString(platformDirsStr));
+
+            return dirs;
+        }
         #endregion
 
         #region IMicrosoftPlatformBff implementation
         public virtual bool SupportsResourceFiles => false;
+
+        protected void GetLinkerExecutableInfo(Project.Configuration conf, out string linkerPathOverride, out string linkerExeOverride, out string librarianExeOverride)
+        {
+            linkerPathOverride = null;
+            linkerExeOverride = null;
+            librarianExeOverride = null;
+
+            var platformToolset = Options.GetObject<Options.Vc.General.PlatformToolset>(conf);
+            var useLldLink = Options.GetObject<Options.Vc.LLVM.UseLldLink>(conf);
+            if (useLldLink == Options.Vc.LLVM.UseLldLink.Enable ||
+               (useLldLink == Options.Vc.LLVM.UseLldLink.Default && platformToolset == Options.Vc.General.PlatformToolset.LLVM))
+            {
+                linkerPathOverride = Path.Combine(ClangForWindows.Settings.LLVMInstallDir, "bin");
+                linkerExeOverride = "lld-link.exe";
+                librarianExeOverride = "llvm-lib.exe";
+            }
+        }
         #endregion
 
         #region IPlatformVcxproj implementation
         public override string ExecutableFileExtension => "exe";
-        public override string SharedLibraryFileExtension => "dll";
+        public override string SharedLibraryFileExtension => "lib";
         public override string ProgramDatabaseFileExtension => "pdb";
         public override string StaticLibraryFileExtension => "lib";
         #endregion
+
+        public enum RuntimeLibrary
+        {
+            Static,
+            Dynamic
+        }
+
+        public static IEnumerable<string> GetUCRTLibs(RuntimeLibrary runtime, bool debugVersion)
+        {
+            // cf. https://blogs.msdn.microsoft.com/vcblog/2015/03/03/introducing-the-universal-crt
+            string suffix = debugVersion ? "d" : "";
+            if (runtime == RuntimeLibrary.Static)
+            {
+                yield return "libcmt" + suffix;
+                yield return "libvcruntime" + suffix;
+                yield return "libucrt" + suffix;
+            }
+            else if (runtime == RuntimeLibrary.Dynamic)
+            {
+                yield return "msvcrt" + suffix;
+                yield return "vcruntime" + suffix; // associated DLL is vcruntime<version><suffix>.dll
+                yield return "ucrt" + suffix; // associated DLL is ucrtbase<suffix>.dll
+            }
+            else
+                throw new NotImplementedException("Unsupported runtime library value " + runtime);
+        }
+
+        public override void GenerateProjectMasmVcxproj(IVcxprojGenerationContext context, IFileGenerator generator)
+        {
+            generator.Write(_projectConfigurationsMasmTemplate);
+        }
     }
 }
