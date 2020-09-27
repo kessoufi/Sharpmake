@@ -246,8 +246,8 @@ namespace Sharpmake.Generators.FastBuild
             }
         }
 
-        // This makefile command generator is for supporting legacy code without any client code change.
-        internal class FastBuildDefaultMakeCommandGenerator : FastBuildMakeCommandGenerator
+        // This NMake command generator is for supporting legacy code without any client code change.
+        internal class FastBuildDefaultNMakeCommandGenerator : FastBuildMakeCommandGenerator
         {
             public override string GetCommand(BuildType buildType, Sharpmake.Project.Configuration conf, string fastbuildArguments)
             {
@@ -530,6 +530,36 @@ namespace Sharpmake.Generators.FastBuild
                     if (dep.IsFastBuild)
                         dependencies.Add(dep);
                 }
+            }
+        }
+
+        internal static UniqueList<Project.Configuration> GetOrderedFlattenedBuildOnlyDependencies(Project.Configuration conf)
+        {
+            var dependencies = new UniqueList<Project.Configuration>();
+            GetOrderedFlattenedBuildOnlyDependenciesInternal(conf, dependencies);
+            return dependencies;
+        }
+
+        private static void GetOrderedFlattenedBuildOnlyDependenciesInternal(Project.Configuration conf, UniqueList<Project.Configuration> dependencies)
+        {
+            if (!conf.IsFastBuild)
+                return;
+
+            IEnumerable<Project.Configuration> confDependencies = conf.BuildOrderDependencies;
+
+            if (confDependencies.Contains(conf))
+                throw new Error("Cyclic dependency detected in project " + conf);
+
+            UniqueList<Project.Configuration> tmpDeps = new UniqueList<Project.Configuration>();
+            foreach (var dep in confDependencies)
+            {
+                GetOrderedFlattenedBuildOnlyDependenciesInternal(dep, tmpDeps);
+                tmpDeps.Add(dep);
+            }
+            foreach (var dep in tmpDeps)
+            {
+                if (dep.IsFastBuild && confDependencies.Contains(dep) && (conf != dep))
+                    dependencies.Add(dep);
             }
         }
 

@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Ubisoft Entertainment
+// Copyright (c) 2017 Ubisoft Entertainment
 // 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -101,13 +101,25 @@ namespace Sharpmake.Generators.VisualStudio
     <AutoGenerateBindingRedirects>[options.AutoGenerateBindingRedirects]</AutoGenerateBindingRedirects>
     <SonarQubeExclude>[options.SonarQubeExclude]</SonarQubeExclude>
     <EnableDefaultItems>[netCoreEnableDefaultItems]</EnableDefaultItems>
+    <GenerateAssemblyInfo>[GeneratedAssemblyConfigTemplate.GenerateAssemblyInfo]</GenerateAssemblyInfo>
+    <GenerateAssemblyConfigurationAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyConfigurationAttribute]</GenerateAssemblyConfigurationAttribute>
+    <GenerateAssemblyDescriptionAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyDescriptionAttribute]</GenerateAssemblyDescriptionAttribute>
+    <GenerateAssemblyProductAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyProductAttribute]</GenerateAssemblyProductAttribute>
+    <GenerateAssemblyTitleAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyTitleAttribute]</GenerateAssemblyTitleAttribute>
+    <GenerateAssemblyCompanyAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyCompanyAttribute]</GenerateAssemblyCompanyAttribute>
+    <GenerateAssemblyFileVersionAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyFileVersionAttribute]</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyVersionAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyVersionAttribute]</GenerateAssemblyVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>[GeneratedAssemblyConfigTemplate.GenerateAssemblyInformationalVersionAttribute]</GenerateAssemblyInformationalVersionAttribute>
     <RestoreProjectStyle>[NugetRestoreProjectStyleString]</RestoreProjectStyle>
+    <ProductVersion>[options.ProductVersion]</ProductVersion>
   </PropertyGroup>
 ";
 
+                public const string DefaultProjectConfigurationCondition = "'$(Configuration)|$(Platform)'=='[conf.Name]|[platformName]'";
+                public const string MultiFrameworkProjectConfigurationCondition = "'$(Configuration)|$(Platform)|$(TargetFramework)'=='[conf.Name]|[platformName]|[targetFramework]'";
 
                 public static string ProjectConfigurationsGeneral =
-@"  <PropertyGroup Condition=""'$(Configuration)|$(Platform)'=='[conf.Name]|[platformName]'"">
+@"  <PropertyGroup Condition=""[projectConfigurationCondition]"">
     <PlatformTarget>[platformName]</PlatformTarget>
     <DebugSymbols>[options.DebugSymbols]</DebugSymbols>
     <DebugType>[options.DebugType]</DebugType>

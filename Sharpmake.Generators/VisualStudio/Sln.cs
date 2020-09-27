@@ -483,6 +483,11 @@ namespace Sharpmake.Generators.VisualStudio
 
             var configurationSectionNames = new List<string>();
 
+            bool containsMultiDotNetFramework = solutionConfigurations.All(sc => sc.Target.HaveFragment<DotNetFramework>()) &&
+                                                solutionConfigurations.Select(sc => sc.Target.GetFragment<DotNetFramework>()).Distinct().Count() > 1;
+
+            var multiDotNetFrameworkConfigurationNames = new HashSet<string>();
+
             fileGenerator.Write(Template.Solution.GlobalSectionSolutionConfigurationBegin);
             foreach (Solution.Configuration solutionConfiguration in solutionConfigurations)
             {
@@ -497,6 +502,14 @@ namespace Sharpmake.Generators.VisualStudio
                 {
                     configurationName = solutionConfiguration.Name;
                     category = solutionConfiguration.PlatformName;
+                }
+
+                if (containsMultiDotNetFramework)
+                {
+                    if (multiDotNetFrameworkConfigurationNames.Contains(configurationName))
+                        continue;
+
+                    multiDotNetFrameworkConfigurationNames.Add(configurationName);
                 }
 
                 using (fileGenerator.Declare("configurationName", configurationName))
@@ -521,6 +534,9 @@ namespace Sharpmake.Generators.VisualStudio
                 fileGenerator.Write(configurationSectionName);
 
             fileGenerator.Write(Template.Solution.GlobalSectionSolutionConfigurationEnd);
+
+            if (containsMultiDotNetFramework)
+                multiDotNetFrameworkConfigurationNames.Clear();
 
             // write all project target and match then to a solution target
             fileGenerator.Write(Template.Solution.GlobalSectionProjectConfigurationBegin);
@@ -597,6 +613,14 @@ namespace Sharpmake.Generators.VisualStudio
                         category = solutionConfiguration.PlatformName;
                     }
 
+                    if (containsMultiDotNetFramework)
+                    {
+                        if (multiDotNetFrameworkConfigurationNames.Contains(configurationName))
+                            continue;
+
+                        multiDotNetFrameworkConfigurationNames.Add(configurationName);
+                    }
+
                     using (fileGenerator.Declare("solutionConf", solutionConfiguration))
                     using (fileGenerator.Declare("projectGuid", solutionProject.UserData["Guid"]))
                     using (fileGenerator.Declare("projectConf", projectConf))
@@ -641,7 +665,7 @@ namespace Sharpmake.Generators.VisualStudio
                 var solutionConfiguration = fb.Key;
                 if (fb.Value.Count == 0)
                     Builder.Instance.LogErrorLine($"{solutionFile} - {solutionConfiguration.Name}|{solutionConfiguration.PlatformName} - has no FastBuild projects to build.");
-                else if (fb.Value.Count > 1)
+                else if (solution.GenerateFastBuildAllProject && fb.Value.Count > 1)
                     Builder.Instance.LogErrorLine($"{solutionFile} - {solutionConfiguration.Name}|{solutionConfiguration.PlatformName} - has more than one FastBuild project to build ({string.Join(";", fb.Value)}).");
             }
 

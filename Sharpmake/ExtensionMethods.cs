@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2017 Ubisoft Entertainment
+// Copyright (c) 2017 Ubisoft Entertainment
 // 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -346,6 +346,72 @@ namespace Sharpmake
             return version;
         }
 
+        public static string GetVCTargetsPath(this DevEnv visualVersion)
+        {
+            if (!visualVersion.IsVisualStudio())
+                return null;
+
+            switch (visualVersion)
+            {
+                case DevEnv.vs2010:
+                    return Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"MSBuild\Microsoft.Cpp\v4.0"));
+                case DevEnv.vs2012:
+                case DevEnv.vs2013:
+                case DevEnv.vs2015:
+                    string versionSubfolder = visualVersion.GetDefaultPlatformToolset().ToUpperInvariant(); // this is enough for now but we could make a specific method to retrieve this value
+                    return Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"MSBuild\Microsoft.Cpp\v4.0", versionSubfolder));
+                case DevEnv.vs2017:
+                    return Path.Combine(visualVersion.GetVisualStudioDir(), @"Common7\IDE\VC\VCTargets");
+                case DevEnv.vs2019:
+                    return Path.Combine(visualVersion.GetVisualStudioDir(), @"MSBuild\Microsoft\VC\v160");
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(visualVersion), visualVersion, null);
+            }
+        }
+
+        private static string GetDefaultRedistVersion(this DevEnv visualVersion)
+        {
+            switch (visualVersion)
+            {
+                case DevEnv.vs2017:
+                    return "14.16.27012";
+                case DevEnv.vs2019:
+                    return "14.24.28127";
+                default:
+                    throw new Error("DevEnv " + visualVersion + " not recognized for default compiler version");
+            }
+        }
+
+        private static readonly ConcurrentDictionary<DevEnv, Version> s_visualStudioVCRedistVersionCache = new ConcurrentDictionary<DevEnv, Version>();
+        public static Version GetVisualStudioVCRedistVersion(this DevEnv visualVersion)
+        {
+            Version version = s_visualStudioVCRedistVersionCache.GetOrAdd(visualVersion, devEnv =>
+            {
+                string vsDir = visualVersion.GetVisualStudioDir();
+                switch (visualVersion)
+                {
+                    case DevEnv.vs2017:
+                    case DevEnv.vs2019:
+                        string versionString = visualVersion.GetDefaultRedistVersion(); // default fallback
+                        try
+                        {
+                            string toolchainFile = Path.Combine(vsDir, "VC", "Auxiliary", "Build", "Microsoft.VCRedistVersion.default.txt");
+                            if (File.Exists(toolchainFile))
+                            {
+                                using (StreamReader file = new StreamReader(toolchainFile))
+                                    versionString = file.ReadLine().Trim();
+                            }
+                        }
+                        catch { }
+
+                        return new Version(versionString);
+                }
+                throw new ArgumentOutOfRangeException("VS version not recognized " + visualVersion);
+            });
+
+            return version;
+        }
+
         public static string GetVisualStudioBinPath(this DevEnv visualVersion, Platform platform)
         {
             switch (visualVersion)
@@ -610,6 +676,7 @@ namespace Sharpmake
                 case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_17134_0: return "10.0.17134.0";
                 case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_17763_0: return "10.0.17763.0";
                 case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_18362_0: return "10.0.18362.0";
+                case Options.Vc.General.WindowsTargetPlatformVersion.v10_0_19041_0: return "10.0.19041.0";
                 case Options.Vc.General.WindowsTargetPlatformVersion.Latest: return "$(LatestTargetPlatformVersion)";
                 default:
                     throw new ArgumentOutOfRangeException(windowsTargetPlatformVersion.ToString());
@@ -643,6 +710,66 @@ namespace Sharpmake
                     return false;
                 default:
                     throw new ArgumentOutOfRangeException(nameof(platformToolset), platformToolset, null);
+            }
+        }
+
+        public static DevEnv? GetDefaultDevEnvForToolset(this Options.Vc.General.PlatformToolset platformToolset)
+        {
+            switch (platformToolset)
+            {
+                case Options.Vc.General.PlatformToolset.Default:
+                    return null;
+                case Options.Vc.General.PlatformToolset.v100:
+                    return DevEnv.vs2010;
+                case Options.Vc.General.PlatformToolset.v110:
+                case Options.Vc.General.PlatformToolset.v110_xp:
+                    return DevEnv.vs2012;
+                case Options.Vc.General.PlatformToolset.v120:
+                case Options.Vc.General.PlatformToolset.v120_xp:
+                    return DevEnv.vs2013;
+                case Options.Vc.General.PlatformToolset.v140:
+                case Options.Vc.General.PlatformToolset.v140_xp:
+                    return DevEnv.vs2015;
+                case Options.Vc.General.PlatformToolset.v141:
+                case Options.Vc.General.PlatformToolset.v141_xp:
+                    return DevEnv.vs2017;
+                case Options.Vc.General.PlatformToolset.v142:
+                    return DevEnv.vs2019;
+                case Options.Vc.General.PlatformToolset.LLVM_vs2012:
+                case Options.Vc.General.PlatformToolset.LLVM_vs2014:
+                case Options.Vc.General.PlatformToolset.LLVM:
+                    return null;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(platformToolset), platformToolset, null);
+            }
+        }
+
+        public static void GetVcPathKeysFromDevEnv(this DevEnv devEnv, out string vcTargetsPathKey, out string vcRootPathKey)
+        {
+            switch (devEnv)
+            {
+                case DevEnv.vs2012:
+                    vcTargetsPathKey = "VCTargetsPath11";
+                    vcRootPathKey = "VCInstallDir_110";
+                    break;
+                case DevEnv.vs2013:
+                    vcTargetsPathKey = "VCTargetsPath12";
+                    vcRootPathKey = "VCInstallDir_120";
+                    break;
+                case DevEnv.vs2015:
+                    vcTargetsPathKey = "VCTargetsPath14";
+                    vcRootPathKey = "VCInstallDir_140";
+                    break;
+                case DevEnv.vs2017:
+                    vcTargetsPathKey = "VCTargetsPath15";
+                    vcRootPathKey = "VCInstallDir_150";
+                    break;
+                case DevEnv.vs2019:
+                    vcTargetsPathKey = "VCTargetsPath16";
+                    vcRootPathKey = "VCInstallDir_160";
+                    break;
+                default:
+                    throw new NotImplementedException("Please implement redirection of toolchain for " + devEnv);
             }
         }
 

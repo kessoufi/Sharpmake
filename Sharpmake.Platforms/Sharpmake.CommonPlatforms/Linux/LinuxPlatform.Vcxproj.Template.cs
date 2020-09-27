@@ -76,6 +76,7 @@ namespace Sharpmake
           <EditAndContinue>[options.EditAndContinue]</EditAndContinue>
           <InfoStripping>[options.InfoStripping]</InfoStripping>
           <DataStripping>[options.DataStripping]</DataStripping>
+          <WholeArchiveBegin>[options.WholeArchive]</WholeArchiveBegin>
           <DuplicateStripping>[options.DuplicateStripping]</DuplicateStripping>
           <Addressing>[options.Addressing]</Addressing>
         </Link>
@@ -86,6 +87,7 @@ namespace Sharpmake
         <LocalDebuggerCommandArguments>[conf.VcxprojUserFile.LocalDebuggerCommandArguments]</LocalDebuggerCommandArguments>
         <LocalDebuggerWorkingDirectory>[conf.VcxprojUserFile.LocalDebuggerWorkingDirectory]</LocalDebuggerWorkingDirectory>
         <RemoteDebuggerCommand>[conf.VcxprojUserFile.RemoteDebuggerCommand]</RemoteDebuggerCommand>
+        <RemoteDebuggerCommandArguments>[conf.VcxprojUserFile.RemoteDebuggerCommandArguments]</RemoteDebuggerCommandArguments>
         <RemoteDebuggingMode>[conf.VcxprojUserFile.RemoteDebuggingMode]</RemoteDebuggingMode>
         <RemoteDebuggerWorkingDirectory>[conf.VcxprojUserFile.RemoteDebuggerWorkingDirectory]</RemoteDebuggerWorkingDirectory>
         <AdditionalDebuggerCommands>[conf.AdditionalDebuggerCommands]</AdditionalDebuggerCommands>
@@ -107,10 +109,10 @@ namespace Sharpmake
         <CustomBuildBeforeTargets>[options.CustomBuildStepBeforeTargets]</CustomBuildBeforeTargets>
         <CustomBuildAfterTargets>[options.CustomBuildStepAfterTargets]</CustomBuildAfterTargets>
         <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
-        <RemoteCppCompileToolExe>clang++-3.8</RemoteCppCompileToolExe>
-        <RemoteCCompileToolExe>clang-3.8</RemoteCCompileToolExe>
-        <RemoteLdToolExe>clang-3.8</RemoteLdToolExe>
-        <LocalRemoteCopySources>false</LocalRemoteCopySources>
+        <RemoteCppCompileToolExe>[options.RemoteCppCompileToolExe]</RemoteCppCompileToolExe>
+        <RemoteCCompileToolExe>[options.RemoteCCompileToolExe]</RemoteCCompileToolExe>
+        <RemoteLdToolExe>[options.RemoteLdToolExe]</RemoteLdToolExe>
+        <LocalRemoteCopySources>[options.CopySources]</LocalRemoteCopySources>
         <RemoteLinkLocalCopyOutput>false</RemoteLinkLocalCopyOutput>
         <RemoteRootDir></RemoteRootDir>
         <RemoteProjectDir>[options.ProjectDirectory]</RemoteProjectDir>
@@ -119,6 +121,7 @@ namespace Sharpmake
 
             private const string _projectConfigurationsFastBuildMakefile =
             @"    <PropertyGroup Condition=""'$(Configuration)|$(Platform)'=='[conf.Name]|[platformName]'"">
+<TargetName>[options.OutputFileName]</TargetName>
 <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
 <RemoteRootDir></RemoteRootDir>
 <RemoteProjectDir>[options.ProjectDirectory]</RemoteProjectDir>
@@ -130,7 +133,7 @@ namespace Sharpmake
 <ReBuildCommandLine>cd [relativeMasterBffPath]
 [conf.FastBuildCustomActionsBeforeBuildCommand]
 [fastBuildMakeCommandRebuild]</ReBuildCommandLine>
-<LocalRemoteCopySources>false</LocalRemoteCopySources>
+<LocalRemoteCopySources>[options.CopySources]</LocalRemoteCopySources>
 <CleanCommandLine>del ""[options.IntermediateDirectory]\*unity*.cpp"" >NUL 2>NUL
 del ""$(ProjectDir)[options.IntermediateDirectory]\*.obj"" >NUL 2>NUL
 del ""$(ProjectDir)[options.IntermediateDirectory]\*.a"" >NUL 2>NUL

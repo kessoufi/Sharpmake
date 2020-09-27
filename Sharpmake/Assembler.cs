@@ -373,6 +373,11 @@ namespace Sharpmake
             {
                 _assemblyInfo.DebugProjectName = name;
             }
+
+            public void AddDefine(string define)
+            {
+                _builderContext.AddDefine(define);
+            }
         }
 
         private IAssemblyInfo Build(IBuilderContext builderContext, string libraryFile, params string[] sources)
@@ -616,6 +621,9 @@ namespace Sharpmake
                 {
                     ++lineNumber;
 
+                    if (!string.IsNullOrEmpty(line) && line.StartsWith("namespace", StringComparison.Ordinal))
+                        break;
+
                     // First, update the parsing flow with the current line
                     foreach (IParsingFlowParser parsingFlowParser in flowParsersList)
                     {
@@ -629,9 +637,6 @@ namespace Sharpmake
                     }
 
                     line = reader.ReadLine()?.TrimStart();
-
-                    if (!string.IsNullOrEmpty(line) && line.StartsWith("namespace", StringComparison.Ordinal))
-                        break;
                 }
 
                 foreach (IParsingFlowParser parsingFlowParser in flowParsersList)

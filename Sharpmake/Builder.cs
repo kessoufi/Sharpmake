@@ -19,6 +19,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace Sharpmake
 {
@@ -146,6 +147,8 @@ namespace Sharpmake
 
         private readonly List<ISourceAttributeParser> _attributeParsers = new List<ISourceAttributeParser>();
 
+        private static readonly Lazy<Regex> s_defineValidationRegex = new Lazy<Regex>(() => new Regex(@"^\w+$", RegexOptions.Compiled));
+
         public Builder(
             BuildContext.BaseBuildContext context,
             bool multithreaded,
@@ -253,11 +256,14 @@ namespace Sharpmake
             LogWriteLine("  building projects and solutions configurations{0}...", _multithreaded ? $" using {_tasks.NumTasks()} tasks" : " single-threaded");
             using (new Util.StopwatchProfiler(ms => { LogWriteLine("    build done in {0:0.0} sec", ms / 1000.0f); }))
             {
+                _buildScheduledType.UnionWith(Arguments.TypesToGenerate);
+
                 if (!_multithreaded)
                 {
-                    for (int i = 0; i < Arguments.TypesToGenerate.Count; ++i)
+                    var typesToGenerate = new List<Type>(Arguments.TypesToGenerate);
+                    for (int i = 0; i < typesToGenerate.Count; ++i)
                     {
-                        Type type = Arguments.TypesToGenerate[i];
+                        Type type = typesToGenerate[i];
 
                         HashSet<Type> projectDependenciesTypes;
                         if (type.IsSubclassOf(typeof(Project)))
@@ -279,15 +285,13 @@ namespace Sharpmake
 
                         foreach (Type projectDependenciesType in projectDependenciesTypes)
                         {
-                            if (!Arguments.TypesToGenerate.Contains(projectDependenciesType))
-                                Arguments.TypesToGenerate.Add(projectDependenciesType);
+                            if (_buildScheduledType.Add(projectDependenciesType))
+                                typesToGenerate.Add(projectDependenciesType);
                         }
                     }
                 }
                 else
                 {
-                    _buildScheduledType.UnionWith(Arguments.TypesToGenerate);
-
                     foreach (Type type in Arguments.TypesToGenerate)
                     {
                         _tasks.AddTask(BuildProjectAndSolutionTask, type, type.BaseType == typeof(Project) ? ThreadPool.Priority.Low : ThreadPool.Priority.High);
@@ -463,6 +467,20 @@ namespace Sharpmake
             if (_references.TryGetValue(args.Name, out explicitReferencesFullPath))
                 return Assembly.LoadFrom(explicitReferencesFullPath);
 
+            // Default binding redirect for old versions of an assembly to the implicitly/explicitly referenced one
+            var requestedAssemblyName = new AssemblyName(args.Name);
+            var referencedAssemblyHighestVersion = _references.Keys
+                .Where(assemblyFullName => assemblyFullName.StartsWith(requestedAssemblyName.Name, StringComparison.OrdinalIgnoreCase))
+                .Select(assemblyFullName => new AssemblyName(assemblyFullName))
+                .OrderBy(assemblyName => assemblyName.Version)
+                .LastOrDefault()? // In case the assembly args.Name is referenced with multiple version, take the highest one
+                .FullName;
+
+            if (referencedAssemblyHighestVersion != null)
+            {
+                return Assembly.LoadFrom(_references[referencedAssemblyHighestVersion]);
+            }
+
             return null;
         }
 
@@ -540,6 +558,17 @@ namespace Sharpmake
                 solution.Resolve();
 
                 return solution;
+            }
+        }
+
+        public void AddDefine(string define)
+        {
+            if (!s_defineValidationRegex.Value.IsMatch(define))
+                throw new Error("error: invalid define '{0}', a define must be a single word", define);
+
+            if (Defines.Add(define))
+            {
+                DebugWriteLine("Added define: {0}", define);
             }
         }
 
@@ -1029,6 +1058,11 @@ namespace Sharpmake
                     var assembly = extensionLoader.LoadExtension(file, false);
                     return new LoadInfo(assembly, _builder._attributeParsers.Skip(parserCount));
                 }
+            }
+
+            public void AddDefine(string define)
+            {
+                _builder.AddDefine(define);
             }
         }
 

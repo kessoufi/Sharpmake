@@ -25,7 +25,7 @@ namespace Sharpmake.Generators.FastBuild
 {
     public partial class Bff : IProjectGenerator
     {
-        private class BffGenerationContext : IGenerationContext
+        private class BffGenerationContext : IBffGenerationContext
         {
             private Resolver _envVarResolver;
 
@@ -34,6 +34,8 @@ namespace Sharpmake.Generators.FastBuild
             public Project Project { get; }
 
             public Project.Configuration Configuration { get; set; }
+
+            public IReadOnlyList<Project.Configuration> ProjectConfigurations { get; }
 
             public string ProjectDirectory { get; }
 
@@ -62,13 +64,17 @@ namespace Sharpmake.Generators.FastBuild
                 }
             }
 
-            public BffGenerationContext(Builder builder, Project project, string projectDir)
+            public IReadOnlyDictionary<Platform, IPlatformBff> PresentPlatforms { get; }
+
+            public BffGenerationContext(Builder builder, Project project, string projectDir, IEnumerable<Project.Configuration> projectConfigurations)
             {
                 Builder = builder;
                 Project = project;
                 ProjectDirectory = projectDir;
                 ProjectDirectoryCapitalized = Util.GetCapitalizedPath(projectDir);
                 ProjectSourceCapitalized = Util.GetCapitalizedPath(project.SourceRootPath);
+                ProjectConfigurations = projectConfigurations as IReadOnlyList<Project.Configuration>;
+                PresentPlatforms = ProjectConfigurations.Select(conf => conf.Platform).Distinct().ToDictionary(p => p, PlatformRegistry.Get<IPlatformBff>);
             }
 
             public void SelectOption(params Options.OptionAction[] options)
@@ -136,8 +142,6 @@ namespace Sharpmake.Generators.FastBuild
 
         public static void InitializeBuilder(Builder builder)
         {
-            if (FastBuildSettings.MakeCommandGenerator == null)
-                FastBuildSettings.MakeCommandGenerator = new FastBuildDefaultMakeCommandGenerator();
         }
 
         private static ConcurrentDictionary<DevEnv, string> s_LatestTargetPlatformVersions = new ConcurrentDictionary<DevEnv, string>();
@@ -198,7 +202,7 @@ namespace Sharpmake.Generators.FastBuild
             Project.Configuration firstConf = configurations.First();
             string projectName = firstConf.ProjectName;
             string projectPath = new FileInfo(projectFile).Directory.FullName;
-            var context = new BffGenerationContext(builder, project, projectPath);
+            var context = new BffGenerationContext(builder, project, projectPath, configurations);
             string projectBffFile = Bff.GetBffFileName(projectPath, firstConf.BffFileName); // TODO: bff file name could be different per conf, hence we would generate more than one file
             string fastBuildClrSupport = Util.IsDotNet(firstConf) ? "/clr" : FileGeneratorUtilities.RemoveLineTag;
             List<Vcxproj.ProjectFile> filesInNonDefaultSection;
@@ -377,6 +381,7 @@ namespace Sharpmake.Generators.FastBuild
 
                         string fastBuildOutputFileShortName = GetShortProjectName(project, conf);
                         var fastBuildProjectDependencies = new List<string>();
+                        var fastBuildBuildOnlyDependencies = new List<string>();
                         var fastBuildProjectExeUtilityDependencyList = new List<string>();
 
                         bool mustGenerateLibrary = confSubConfigs.Count > 1 && !useObjectLists && isLastSubConfig && isOutputTypeLib;
@@ -407,6 +412,23 @@ namespace Sharpmake.Generators.FastBuild
                                 else
                                 {
                                     fastBuildProjectExeUtilityDependencyList.Add(GetShortProjectName(depProjConfig.Project, depProjConfig));
+                                }
+                            }
+
+                            orderedProjectDeps = UtilityMethods.GetOrderedFlattenedBuildOnlyDependencies(conf);
+                            foreach (var depProjConfig in orderedProjectDeps)
+                            {
+                                if (depProjConfig.Project == project)
+                                    throw new Error("Sharpmake-FastBuild : Project dependencies refers to itself.");
+
+                                bool isExport = depProjConfig.Project.SharpmakeProjectType == Project.ProjectTypeAttribute.Export;
+                                if (isExport)
+                                    continue;
+
+                                if (depProjConfig.Output != Project.Configuration.OutputType.Exe &&
+                                    depProjConfig.Output != Project.Configuration.OutputType.Utility)
+                                {
+                                    fastBuildBuildOnlyDependencies.Add(GetShortProjectName(depProjConfig.Project, depProjConfig));
                                 }
                             }
                         }
@@ -688,16 +710,37 @@ namespace Sharpmake.Generators.FastBuild
                                         string mscVer = Options.GetString<Options.Clang.Compiler.MscVersion>(conf);
                                         if (string.IsNullOrEmpty(mscVer))
                                         {
-                                            switch (context.DevelopmentEnvironment)
+                                            Options.Vc.General.PlatformToolset overridenPlatformToolset = Options.Vc.General.PlatformToolset.Default;
+                                            if (Options.WithArgOption<Options.Vc.General.PlatformToolset>.Get<Options.Clang.Compiler.LLVMVcPlatformToolset>(conf, ref overridenPlatformToolset)
+                                                && overridenPlatformToolset != Options.Vc.General.PlatformToolset.Default
+                                                && !overridenPlatformToolset.IsDefaultToolsetForDevEnv(context.DevelopmentEnvironment))
                                             {
-                                                case DevEnv.vs2017:
-                                                    mscVer = "1910";
-                                                    break;
-                                                case DevEnv.vs2019:
-                                                    mscVer = "1920";
-                                                    break;
-                                                default:
-                                                    throw new Error("Clang-cl used with unsupported DevEnv: " + context.DevelopmentEnvironment.ToString());
+                                                switch (overridenPlatformToolset)
+                                                {
+                                                    case Options.Vc.General.PlatformToolset.v141:
+                                                    case Options.Vc.General.PlatformToolset.v141_xp:
+                                                        mscVer = "1910";
+                                                        break;
+                                                    case Options.Vc.General.PlatformToolset.v142:
+                                                        mscVer = "1920";
+                                                        break;
+                                                    default:
+                                                        throw new Error("LLVMVcPlatformToolset! Platform toolset override '{0}' not supported", overridenPlatformToolset);
+                                                }
+                                            }
+                                            else
+                                            {
+                                                switch (context.DevelopmentEnvironment)
+                                                {
+                                                    case DevEnv.vs2017:
+                                                        mscVer = "1910";
+                                                        break;
+                                                    case DevEnv.vs2019:
+                                                        mscVer = "1920";
+                                                        break;
+                                                    default:
+                                                        throw new Error("Clang-cl used with unsupported DevEnv: " + context.DevelopmentEnvironment.ToString());
+                                                }
                                             }
                                         }
                                         llvmClangCompilerOptions = string.Format("-m64 -fmsc-version={0}", mscVer); // -m$(PlatformArchitecture)
@@ -836,7 +879,7 @@ namespace Sharpmake.Generators.FastBuild
                             List<string> fastbuildEmbeddedResourceFilesList = new List<string>();
 
                             var sourceFiles = confSubConfigs[tuple];
-                            foreach (Vcxproj.ProjectFile sourceFile in sourceFiles)
+                            foreach (var sourceFile in sourceFiles)
                             {
                                 string sourceFileName = CurrentBffPathKeyCombine(sourceFile.FileNameProjectRelative);
 
@@ -936,6 +979,7 @@ namespace Sharpmake.Generators.FastBuild
                                     using (bffGenerator.Declare("fastBuildEmbeddedResources", fastBuildEmbeddedResources))
                                     using (bffGenerator.Declare("fastBuildPrecompiledSourceFile", fastBuildPrecompiledSourceFile))
                                     using (bffGenerator.Declare("fastBuildProjectDependencies", UtilityMethods.FBuildFormatList(fastBuildProjectDependencies, 30)))
+                                    using (bffGenerator.Declare("fastBuildBuildOnlyDependencies", UtilityMethods.FBuildFormatList(fastBuildBuildOnlyDependencies, 30)))
                                     using (bffGenerator.Declare("fastBuildPreBuildTargets", UtilityMethods.FBuildFormatList(fastBuildPreBuildDependencies.ToList(), 28)))
                                     using (bffGenerator.Declare("fastBuildObjectListEmbeddedResources", fastBuildObjectListEmbeddedResources))
                                     using (bffGenerator.Declare("fastBuildCompilerPCHOptions", fastBuildCompilerPCHOptions))
@@ -1290,7 +1334,7 @@ namespace Sharpmake.Generators.FastBuild
             string resolvedInclude = resolver.Resolve(include);
             if (resolvedInclude.StartsWith(context.Project.RootPath, StringComparison.OrdinalIgnoreCase))
                 resolvedInclude = CurrentBffPathKeyCombine(Util.PathGetRelative(context.ProjectDirectory, resolvedInclude, true));
-            return $@"{prefix}""{resolvedInclude}""";
+            return $@"{prefix}{Util.DoubleQuotes}{resolvedInclude}{Util.DoubleQuotes}";
         }
 
         private static void GenerateBffOptions(
@@ -1300,7 +1344,13 @@ namespace Sharpmake.Generators.FastBuild
         )
         {
             // resolve targetPlatformVersion as it may be used in includes
-            string targetPlatformVersionString = GetLatestTargetPlatformVersion(context.Configuration.Compiler);
+            string targetPlatformVersionString = "";
+            if (context.Configuration.Compiler.IsVisualStudio())
+            {
+                targetPlatformVersionString = GetLatestTargetPlatformVersion(context.Configuration.Compiler);
+            }
+
+            var platformBff = context.PresentPlatforms[context.Configuration.Platform];
 
             var resolverParams = new[] {
                     new VariableAssignment("project", context.Project),
@@ -1311,8 +1361,7 @@ namespace Sharpmake.Generators.FastBuild
             var platformDescriptor = PlatformRegistry.Get<IPlatformDescriptor>(context.Configuration.Platform);
             context.EnvironmentVariableResolver = platformDescriptor.GetPlatformEnvironmentResolver(resolverParams);
             projectOptionsGen.GenerateOptions(context);
-
-            GenerateResourceCompilerOptions(context, platformDescriptor);
+            platformBff.SelectPreprocessorDefinitionsBff(context);
 
             FillIncludeDirectoriesOptions(context);
 
@@ -1320,29 +1369,6 @@ namespace Sharpmake.Generators.FastBuild
 
             OrderableStrings additionalDependencies = FillLibrariesOptions(context);
             additionalDependenciesPerConf.Add(context.Configuration, additionalDependencies);
-        }
-
-        private static void GenerateResourceCompilerOptions(BffGenerationContext context, IPlatformDescriptor platformDescriptor)
-        {
-            Strings resourceDefines = Options.GetStrings<Options.Vc.ResourceCompiler.PreprocessorDefinitions>(context.Configuration);
-            if (resourceDefines.Any())
-            {
-                var fastBuildDefines = new List<string>();
-                string platformDefineSwitch = platformDescriptor.IsUsingClang ? "-D" : "/D";
-
-                foreach (string resourceDefine in resourceDefines)
-                {
-                    if (string.IsNullOrWhiteSpace(resourceDefine))
-                        continue;
-
-                    fastBuildDefines.Add(string.Format(@"{0}""{1}""", platformDefineSwitch, resourceDefine.Replace(@"""", @"\""")));
-                }
-                context.CommandLineOptions["ResourcePreprocessorDefinitions"] = string.Join($"'{Environment.NewLine}                                    + ' ", fastBuildDefines);
-            }
-            else
-            {
-                context.CommandLineOptions["ResourcePreprocessorDefinitions"] = FileGeneratorUtilities.RemoveLineTag;
-            }
         }
 
         private static void FillIncludeDirectoriesOptions(BffGenerationContext context)
@@ -1359,7 +1385,7 @@ namespace Sharpmake.Generators.FastBuild
             var platformDescriptor = PlatformRegistry.Get<IPlatformDescriptor>(context.Configuration.Platform);
             if (context.EnvironmentVariableResolver != null)
             {
-                string defaultCmdLineIncludePrefix = platformDescriptor.IsUsingClang ? "-I" : "/I";
+                string defaultCmdLineIncludePrefix = platformDescriptor.IsUsingClang ? "-I " : "/I";
 
                 // Fill include dirs
                 var dirs = new List<string>();
@@ -1502,7 +1528,7 @@ namespace Sharpmake.Generators.FastBuild
                     if (!PlatformRegistry.Get<IPlatformDescriptor>(context.Configuration.Platform).IsUsingClang)
                         linkOption = @"/LIBPATH:";
                     else
-                        linkOption = @"-L";
+                        linkOption = @"-L ";
 
                     var cmdAdditionalLibDirectories = libDirs.Select(p => Bff.CmdLineConvertIncludePathsFunc(context, context.EnvironmentVariableResolver, p, linkOption));
 
@@ -1850,17 +1876,17 @@ namespace Sharpmake.Generators.FastBuild
             filesInNonDefaultSections = new List<Vcxproj.ProjectFile>();
 
             // Add source files
-            List<Vcxproj.ProjectFile> allFiles = new List<Vcxproj.ProjectFile>();
+            var allFiles = new List<Vcxproj.ProjectFile>();
             Strings projectFiles = context.Project.GetSourceFilesForConfigurations(configurations);
             foreach (string file in projectFiles)
             {
-                Vcxproj.ProjectFile projectFile = new Vcxproj.ProjectFile(context, file);
+                var projectFile = new Vcxproj.ProjectFile(context, file);
                 allFiles.Add(projectFile);
             }
             allFiles.Sort((l, r) => string.Compare(l.FileNameProjectRelative, r.FileNameProjectRelative, StringComparison.InvariantCulture));
 
-            List<Vcxproj.ProjectFile> sourceFiles = new List<Vcxproj.ProjectFile>();
-            foreach (Vcxproj.ProjectFile projectFile in allFiles)
+            var sourceFiles = new List<Vcxproj.ProjectFile>();
+            foreach (var projectFile in allFiles)
             {
                 if (context.Project.SourceFilesCompileExtensions.Contains(projectFile.FileExtension) ||
                     (String.Compare(projectFile.FileExtension, ".rc", StringComparison.OrdinalIgnoreCase) == 0) ||
@@ -1868,7 +1894,7 @@ namespace Sharpmake.Generators.FastBuild
                     sourceFiles.Add(projectFile);
             }
 
-            foreach (Vcxproj.ProjectFile file in sourceFiles)
+            foreach (var file in sourceFiles)
             {
                 foreach (Project.Configuration conf in configurations)
                 {

@@ -1113,6 +1113,7 @@ namespace Sharpmake
             public UniqueList<Configuration> ConfigurationDependencies = new UniqueList<Configuration>();
             public UniqueList<Configuration> ForceUsingDependencies = new UniqueList<Configuration>();
             public UniqueList<Configuration> GenericBuildDependencies = new UniqueList<Configuration>();
+            internal UniqueList<Configuration> BuildOrderDependencies = new UniqueList<Configuration>();
 
             /// <summary>
             /// Gets the list of public dependencies for .NET projects.
@@ -1509,19 +1510,6 @@ namespace Sharpmake
                         // see https://ss64.com/nt/robocopy-exit.html for more info
                         "& if %ERRORLEVEL% GEQ 8 (echo Copy failed & exit 1) else (type nul>nul)"
                     );
-                }
-
-                internal override void Resolve(Resolver resolver)
-                {
-                    base.Resolve(resolver);
-
-                    // TODO: that test is very dodgy. Please remove this, and have the user set the property instead, or even create a new BuildStepCopyDir type
-                    int index = DestinationPath.LastIndexOf(@"\", StringComparison.Ordinal);
-                    var destinationFolder = index < 0 ? DestinationPath : DestinationPath.Substring(index);
-                    var destinationIsFolder = !destinationFolder.Contains(".");
-                    bool isFolderCopy = destinationIsFolder || (Util.DirectoryExists(SourcePath) && Util.DirectoryExists(DestinationPath));
-                    if (isFolderCopy)
-                        IsFileCopy = false;
                 }
             }
 
@@ -2008,6 +1996,23 @@ namespace Sharpmake
             /// </summary>
             public bool IsFastBuild = false;
 
+            /// <summary>
+            /// List of the MasterBff files this project appears in.
+            /// This is populated from the solution generator
+            /// </summary>
+            [Resolver.SkipResolveOnMember]
+            public IEnumerable<string> FastBuildMasterBffList { get { return _fastBuildMasterBffList; } }
+
+            internal void AddMasterBff(string masterBff)
+            {
+                lock (_fastBuildMasterBffListLock)
+                    _fastBuildMasterBffList.Add(masterBff + FastBuildSettings.FastBuildConfigFileExtension); // for some reason we don't get the extension...
+            }
+
+            [Resolver.SkipResolveOnMember]
+            private readonly Strings _fastBuildMasterBffList = new Strings();
+            private readonly object _fastBuildMasterBffListLock = new object();
+
             [Obsolete("Sharpmake will determine the projects to build.")]
             public bool IsMainProject = false;
 
@@ -2165,6 +2170,11 @@ namespace Sharpmake
             public string AppxManifestFilePath = "[conf.TargetPath]/[project.Name].appxmanifest";
 
             public Strings PRIFilesExtensions = new Strings();
+
+            /// <summary>
+            /// Generate relative paths in places where it would be otherwise beneficial to use absolute paths.
+            /// </summary>
+            public bool PreferRelativePaths = true;
 
             internal override void Construct(object owner, ITarget target)
             {
@@ -2620,6 +2630,7 @@ namespace Sharpmake
                 public string LocalDebuggerEnvironment = RemoveLineTag;
                 public string LocalDebuggerWorkingDirectory = RemoveLineTag;
                 public string RemoteDebuggerCommand = RemoveLineTag;
+                public string RemoteDebuggerCommandArguments = RemoveLineTag;
                 public string RemoteDebuggingMode = RemoveLineTag;
                 public string RemoteDebuggerWorkingDirectory = RemoveLineTag;
                 public bool OverwriteExistingFile = true;
@@ -2698,7 +2709,7 @@ namespace Sharpmake
                 Trace.Assert(_linkState == LinkState.NotLinked);
                 _linkState = LinkState.Linking;
 
-                if (builder.DumpDependencyGraph)
+                if (builder.DumpDependencyGraph && !Project.IsFastBuildAll)
                 {
                     DependencyTracker.Instance.AddDependency(DependencyType.Public, Project, this, UnResolvedPublicDependencies, _dependenciesSetting);
                     DependencyTracker.Instance.AddDependency(DependencyType.Private, Project, this, UnResolvedPrivateDependencies, _dependenciesSetting);
@@ -2792,7 +2803,6 @@ namespace Sharpmake
                         _resolvedEventCustomPreBuildExe.AddRange(dependency.EventCustomPreBuildExe);
                         _resolvedEventCustomPostBuildExe.AddRange(dependency.EventCustomPostBuildExe);
                         _resolvedTargetCopyFiles.AddRange(dependency.TargetCopyFiles);
-                        _resolvedTargetDependsFiles.AddRange(dependency.TargetCopyFiles);
                         _resolvedTargetDependsFiles.AddRange(dependency.TargetDependsFiles);
                         _resolvedExecDependsFiles.AddRange(dependency.EventPreBuildExe);
                         _resolvedExecDependsFiles.AddRange(dependency.EventPostBuildExe);
@@ -2834,6 +2844,8 @@ namespace Sharpmake
                                         PlatformRegistry.Get<IConfigurationTasks>(dependency.Platform).SetupStaticLibraryPaths(this, dependencySetting, dependency);
                                     if (dependencySetting.HasFlag(DependencySetting.LibraryFiles))
                                         ConfigurationDependencies.Add(dependency);
+                                    if (dependencySetting == DependencySetting.OnlyBuildOrder)
+                                        BuildOrderDependencies.Add(dependency);
                                 }
 
                                 if (!goesThroughDLL)
@@ -2855,14 +2867,18 @@ namespace Sharpmake
                             break;
                         case OutputType.Dll:
                             {
+                                var configTasks = PlatformRegistry.Get<IConfigurationTasks>(dependency.Platform);
+
                                 if (dependency.ExportDllSymbols && (isImmediate || hasPublicPathToRoot || !goesThroughDLL))
                                 {
                                     if (explicitDependenciesGlobal || !compile || (IsFastBuild && Util.IsDotNet(dependency)))
-                                        PlatformRegistry.Get<IConfigurationTasks>(dependency.Platform).SetupDynamicLibraryPaths(this, dependencySetting, dependency);
+                                        configTasks.SetupDynamicLibraryPaths(this, dependencySetting, dependency);
                                     if (dependencySetting.HasFlag(DependencySetting.LibraryFiles))
                                         ConfigurationDependencies.Add(dependency);
                                     if (dependencySetting.HasFlag(DependencySetting.ForceUsingAssembly))
                                         ForceUsingDependencies.Add(dependency);
+                                    if (dependencySetting == DependencySetting.OnlyBuildOrder)
+                                        BuildOrderDependencies.Add(dependency);
 
                                     // check if that case is valid: dll with additional libs
                                     if (isExport && !goesThroughDLL)
@@ -2879,6 +2895,8 @@ namespace Sharpmake
                                     dependencySetting.HasFlag(DependencySetting.ForceUsingAssembly))
                                     AdditionalUsingDirectories.Add(dependency.TargetPath);
 
+                                string platformDllExtension = "." + dependency.OutputExtension;
+                                string dependencyDllFullPath = Path.Combine(dependency.TargetPath, dependency.TargetFileFullName + platformDllExtension);
                                 if ((Output == OutputType.Exe || ExecuteTargetCopy)
                                     && dependencySetting.HasFlag(DependencySetting.LibraryFiles)
                                     && dependency.TargetPath != TargetPath)
@@ -2886,7 +2904,7 @@ namespace Sharpmake
                                     // If using OnlyBuildOrder, ExecuteTargetCopy must be set to enable the copy.
                                     if (dependencySetting != DependencySetting.OnlyBuildOrder || ExecuteTargetCopy)
                                     {
-                                        _resolvedTargetCopyFiles.Add(Path.Combine(dependency.TargetPath, dependency.TargetFileFullName + ".dll"));
+                                        _resolvedTargetCopyFiles.Add(dependencyDllFullPath);
                                         // Add PDBs only if they exist and the dependency is not an [export] project
                                         if (!isExport && Sharpmake.Options.GetObject<Options.Vc.Linker.GenerateDebugInformation>(dependency) != Sharpmake.Options.Vc.Linker.GenerateDebugInformation.Disable)
                                         {
@@ -2901,7 +2919,7 @@ namespace Sharpmake
                                     _resolvedEventCustomPreBuildExe.AddRange(dependency.EventCustomPreBuildExe);
                                     _resolvedEventCustomPostBuildExe.AddRange(dependency.EventCustomPostBuildExe);
                                 }
-                                _resolvedTargetDependsFiles.Add(Path.Combine(TargetPath, dependency.TargetFileFullName + ".dll"));
+                                _resolvedTargetDependsFiles.Add(dependencyDllFullPath);
 
                                 // If this is not a .Net project, no .Net dependencies are needed
                                 if (Util.IsDotNet(this))
@@ -2922,6 +2940,7 @@ namespace Sharpmake
                                 }
                             }
                             break;
+                        case OutputType.IosApp:
                         case OutputType.Exe:
                             {
                                 if (Output != OutputType.Utility && Output != OutputType.Exe && Output != OutputType.None)
@@ -2932,7 +2951,10 @@ namespace Sharpmake
                                 else if (isImmediate)
                                     resolvedDotNetPrivateDependencies.Add(new DotNetDependency(dependency));
 
-                                ConfigurationDependencies.Add(dependency);
+                                if (dependencySetting == DependencySetting.OnlyBuildOrder)
+                                    BuildOrderDependencies.Add(dependency);
+                                else
+                                    ConfigurationDependencies.Add(dependency);
                             }
                             break;
                         case OutputType.Utility: throw new NotImplementedException(dependency.Project.Name + " " + dependency.Output);

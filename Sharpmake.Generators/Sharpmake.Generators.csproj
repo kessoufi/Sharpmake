@@ -61,12 +61,14 @@
   <ItemGroup>
     <Compile Include="Apple\XCWorkspace.Template.cs" />
     <Compile Include="Apple\XCWorkspace.cs" />
+    <Compile Include="Apple\XCode.Util.cs" />
     <Compile Include="Apple\XCodeProj.Template.cs" />
     <Compile Include="Apple\XCodeProj.cs" />
     <Compile Include="CompilerSettings.cs" />
     <Compile Include="FastBuild\Bff.Template.cs" />
     <Compile Include="FastBuild\Bff.Util.cs" />
     <Compile Include="FastBuild\Bff.cs" />
+    <Compile Include="FastBuild\IBffGenerationContext.cs" />
     <Compile Include="FastBuild\IClangPlatformBff.cs" />
     <Compile Include="FastBuild\IMicrosoftPlatformBff.cs" />
     <Compile Include="FastBuild\IPlatformBff.cs" />
@@ -102,6 +104,9 @@
     <Compile Include="VisualStudio\UserFile.cs" />
     <Compile Include="VisualStudio\Vcxproj.Template.cs" />
     <Compile Include="VisualStudio\Vcxproj.cs" />
+    <Compile Include="VisualStudio\VsProjCommon.Template.cs" />
+    <Compile Include="VisualStudio\VsProjCommon.cs" />
+    <Compile Include="VisualStudio\VsUtil.cs" />
     <Compile Include="XmlFileGenerator.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -1719,9 +1719,9 @@ namespace Sharpmake
             }
             PostResolve();
 
-            if (builder.DumpDependencyGraph)
+            if (builder.DumpDependencyGraph && !IsFastBuildAll)
             {
-                foreach (Project.Configuration conf in Configurations)
+                foreach (Configuration conf in Configurations)
                     DependencyTracker.Instance.UpdateConfiguration(this, conf);
             }
             Resolved = true;
@@ -2194,6 +2194,8 @@ namespace Sharpmake
 
         // writes Pre/Post BuildEvents per configuration instead of one for all, this will make editing events in Visual Studio impossible
         public bool ConfigurationSpecificEvents = false;
+
+        public GeneratedAssemblyConfig GeneratedAssemblyConfig = new GeneratedAssemblyConfig();
 
         // Determines the type of NuGet references generated for this project
         public NuGetPackageMode NuGetReferenceType = NuGetPackageMode.VersionDefault;

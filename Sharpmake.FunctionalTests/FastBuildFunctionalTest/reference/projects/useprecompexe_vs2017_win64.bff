@@ -44,6 +44,7 @@ ObjectList( 'UsePrecompExe_Debug_FastBuild_NoBlob_vs2017_win64_0_objects' )
             // + ' /MP'
             // Preprocessor options
             // ---------------------------
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             + ' /D"_DEBUG"'
@@ -136,6 +137,7 @@ ObjectList( 'UsePrecompExe_Debug_FastBuild_NoBlob_vs2017_win64_objects' )
             // + ' /MP'
             // Preprocessor options
             // ---------------------------
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             + ' /D"_DEBUG"'
@@ -294,6 +296,7 @@ ObjectList( 'UsePrecompExe_Release_FastBuild_NoBlob_vs2017_win64_0_objects' )
             // Preprocessor options
             // ---------------------------
             + ' /D"NDEBUG"'
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             // Code Generation options
@@ -387,6 +390,7 @@ ObjectList( 'UsePrecompExe_Release_FastBuild_NoBlob_vs2017_win64_objects' )
             // Preprocessor options
             // ---------------------------
             + ' /D"NDEBUG"'
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             // Code Generation options
@@ -544,6 +548,7 @@ ObjectList( 'UsePrecompExe_Debug_FastBuild_vs2017_win64_0_objects' )
             // + ' /MP'
             // Preprocessor options
             // ---------------------------
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             + ' /D"_DEBUG"'
@@ -633,6 +638,7 @@ ObjectList( 'UsePrecompExe_Debug_FastBuild_vs2017_win64_objects' )
             // + ' /MP'
             // Preprocessor options
             // ---------------------------
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             + ' /D"_DEBUG"'
@@ -791,6 +797,7 @@ ObjectList( 'UsePrecompExe_Release_FastBuild_vs2017_win64_0_objects' )
             // Preprocessor options
             // ---------------------------
             + ' /D"NDEBUG"'
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             // Code Generation options
@@ -881,6 +888,7 @@ ObjectList( 'UsePrecompExe_Release_FastBuild_vs2017_win64_objects' )
             // Preprocessor options
             // ---------------------------
             + ' /D"NDEBUG"'
+            + ' /D"SOME_UTILITY_STRING=\"UTIL FUNC\""'
             + ' /D"WIN64"'
             + ' /D"_CONSOLE"'
             // Code Generation options

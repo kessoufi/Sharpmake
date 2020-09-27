@@ -14,6 +14,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 
 namespace Sharpmake
@@ -30,6 +31,11 @@ namespace Sharpmake
             All = Debug | Release
         }
 
+        /// <summary>
+        /// Used to hold an option that has a string value
+        /// A default value can be set by adding a `public static readonly string Default` field, ex:
+        ///     public static readonly string Default = "3.0";
+        /// </summary>
         public abstract class StringOption
         {
             public static string Get<T>(Project.Configuration conf)
@@ -38,7 +44,7 @@ namespace Sharpmake
                 var option = Options.GetObject<T>(conf);
                 if (option == null)
                 {
-                    var defaultValue = typeof(T).GetField("Default", BindingFlags.Static);
+                    var defaultValue = typeof(T).GetField("Default", BindingFlags.Public | BindingFlags.Static);
                     return defaultValue != null ? (defaultValue.GetValue(null) as string) : RemoveLineTag;
                 }
                 return option.Value;
@@ -97,6 +103,35 @@ namespace Sharpmake
             public int Value { get; }
         }
 
+        /// <summary>
+        /// Used to hold an option that has an untyped argument, could be another option
+        /// </summary>
+        public abstract class WithArgOption<T>
+        {
+            public static bool Get<U>(Configuration conf, ref T option)
+                where U : WithArgOption<T>
+            {
+                var optionObject = Options.GetObject<U>(conf);
+                if (optionObject == null)
+                {
+                    var defaultValue = typeof(U).GetField("Default", BindingFlags.Static);
+                    if (defaultValue != null)
+                        option = (T)defaultValue.GetValue(null);
+                    return false;
+                }
+
+                option = optionObject.Argument;
+                return true;
+            }
+
+            protected WithArgOption(T argument)
+            {
+                Argument = argument;
+            }
+
+            public T Argument { get; }
+        }
+
         internal class ScopedOption : IDisposable
         {
             private Dictionary<string, string> _options;
@@ -126,6 +161,48 @@ namespace Sharpmake
         public class ExplicitOptions : Dictionary<string, string>
         {
             public Strings ExplicitDefines = new Strings();
+        }
+
+        /// <summary>
+        /// This method will retrieve a path option from all the configurations, ensuring it has the same value.
+        /// If none of the configurations have the option, it will return the fallback value
+        /// </summary>
+        /// <typeparam name="T">The type of the option to lookup in the configurations.</typeparam>
+        /// <param name="configurations">The list of configurations to look into.</param>
+        /// <param name="fallback">Optional: Fallback value to return in case none of the configurations have the option.</param>
+        /// <param name="rootpath">Optional: The rootpath to convert the path relative to.</param>
+        /// <returns></returns>
+        public static string GetConfOption<T>(IEnumerable<Project.Configuration> configurations, string fallback = RemoveLineTag, string rootpath = null)
+            where T : PathOption
+        {
+            var values = configurations.Select(conf => PathOption.Get<T>(conf, fallback, rootpath)).Distinct().ToList();
+            if (values.Count != 1)
+                throw new Error(nameof(T) + " has conflicting values in the configurations, they must all have the same");
+
+            return values.First();
+        }
+
+        /// <summary>
+        /// This method will retrieve the values associated to a key in an enumerable of dictionaries,
+        /// ensuring that the value is identical in all of them, or doesn't exist at all.
+        /// If none of the dictionaries contain the key, it will return the fallback value
+        /// </summary>
+        /// <param name="key">The list of dictionaries to look into.</param>
+        /// <param name="dictionaries">The list of dictionaries to look into.</param>
+        /// <param name="fallback">Optional: Fallback value to return in case none of the dictionaries have the key.</param>
+        /// <returns></returns>
+        public static string GetOptionValue(string key, IEnumerable<IReadOnlyDictionary<string, string>> dictionaries, string fallback = RemoveLineTag)
+        {
+            var values = dictionaries.Select(dict =>
+            {
+                string value;
+                return dict.TryGetValue(key, out value) ? value : fallback;
+            }).Distinct().ToList();
+
+            if (values.Count != 1)
+                throw new Error($"Found conflicting values for '{key}' in the dictionaries, they must all have the same value");
+
+            return values.First();
         }
 
         #region Private
@@ -314,6 +391,18 @@ namespace Sharpmake
 
 
             throw new Error("Not default value found for options: " + optionType.Name + " Default Options is " + options);
+        }
+
+        public static bool HasOption<T>(Configuration conf)
+        {
+            List<object> options = conf.Options;
+            for (int i = options.Count - 1; i >= 0; --i)
+            {
+                if (options[i] is T)
+                    return true;
+            }
+
+            return false;
         }
 
         public static IEnumerable<T> GetObjects<T>(Configuration conf)

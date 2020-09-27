@@ -112,8 +112,6 @@ namespace Sharpmake.Generators.VisualStudio
 
         private void GenerateGeneralOptions(IGenerationContext context, ProjectOptionsGenerationContext optionsContext)
         {
-            DevEnv visualVersion = context.Configuration.Target.GetFragment<DevEnv>();
-
             // Default defines, includes, libraries...
             context.Options.ExplicitDefines.AddRange(optionsContext.PlatformVcxproj.GetImplicitlyDefinedSymbols(context));
 
@@ -438,11 +436,15 @@ namespace Sharpmake.Generators.VisualStudio
             Options.Option(Options.Vc.General.DiagnosticsFormat.ColumnInfo, () => { context.Options["DiagnosticsFormat"] = "Column"; context.CommandLineOptions["DiagnosticsFormat"] = "/diagnostics:column"; })
             );
 
-            SelectPreferredToolArchitecture(context);
 
             context.Options["TrackFileAccess"] = FileGeneratorUtilities.RemoveLineTag;
 
-            SelectPlatformToolsetOption(context, optionsContext);
+            if (context.DevelopmentEnvironment.IsVisualStudio())
+            {
+                SelectPreferredToolArchitecture(context);
+                SelectPlatformToolsetOption(context, optionsContext);
+            }
+
 
             // Compiler.SuppressStartupBanner
             context.CommandLineOptions["SuppressStartupBanner"] = "/nologo";
@@ -974,29 +976,6 @@ namespace Sharpmake.Generators.VisualStudio
                 context.CommandLineOptions["UndefinePreprocessorDefinitions"] = FileGeneratorUtilities.RemoveLineTag;
             }
 
-            // concat defines, don't add options.Defines since they are automatically added by VS
-            Strings defines = new Strings();
-            defines.AddRange(context.Options.ExplicitDefines);
-            defines.AddRange(context.Configuration.Defines);
-
-            context.Options["PreprocessorDefinitions"] = defines.JoinStrings(";");
-
-            context.CommandLineOptions["PreprocessorDefinitions"] = FileGeneratorUtilities.RemoveLineTag;
-            if (defines.Count > 0)
-            {
-                var fastBuildDefines = new List<string>();
-                string platformDefineSwitch = optionsContext.PlatformDescriptor.IsUsingClang ? "-D" : "/D";
-
-                foreach (string define in defines)
-                {
-                    if (string.IsNullOrWhiteSpace(define))
-                        continue;
-
-                    fastBuildDefines.Add(string.Format(@"{0}""{1}""", platformDefineSwitch, define.Replace(@"""", @"\""")));
-                }
-                context.CommandLineOptions["PreprocessorDefinitions"] = string.Join($"'{Environment.NewLine}            + ' ", fastBuildDefines);
-            }
-
             // UndefineAllPreprocessorDefinitions
             context.CommandLineOptions["UndefineAllPreprocessorDefinitions"] = FileGeneratorUtilities.RemoveLineTag;
 
@@ -1139,7 +1118,7 @@ namespace Sharpmake.Generators.VisualStudio
 
         private static void SelectPrecompiledHeaderOption(IGenerationContext context, ProjectOptionsGenerationContext optionsContext)
         {
-            if (string.IsNullOrEmpty(context.Configuration.PrecompHeader) || string.IsNullOrEmpty(context.Configuration.PrecompSource))
+            if (!optionsContext.PlatformVcxproj.HasPrecomp(context))
             {
                 context.Options["UsePrecompiledHeader"] = "NotUsing";
                 context.Options["PrecompiledHeaderThrough"] = FileGeneratorUtilities.RemoveLineTag;
@@ -1153,7 +1132,7 @@ namespace Sharpmake.Generators.VisualStudio
                 context.Options["UsePrecompiledHeader"] = "Use";
                 context.Options["PrecompiledHeaderThrough"] = context.Configuration.PrecompHeader;
                 string pchOutputDirectoryRelative = string.IsNullOrEmpty(context.Configuration.PrecompHeaderOutputFolder) ? optionsContext.IntermediateDirectoryRelative : Util.PathGetRelative(context.ProjectDirectory, context.Configuration.PrecompHeaderOutputFolder);
-                context.Options["PrecompiledHeaderFile"] = pchOutputDirectoryRelative + Util.WindowsSeparator + context.Configuration.Project.Name + ".pch";
+                context.Options["PrecompiledHeaderFile"] = Path.Combine(pchOutputDirectoryRelative, $"{context.Configuration.Project.Name}.pch");
                 context.Options["PrecompiledHeaderOutputFileDirectory"] = pchOutputDirectoryRelative;
                 context.CommandLineOptions["PrecompiledHeaderThrough"] = context.Options["PrecompiledHeaderThrough"];
                 context.CommandLineOptions["PrecompiledHeaderFile"] = FormatCommandLineOptionPath(context, context.Options["PrecompiledHeaderFile"]);
@@ -1194,6 +1173,8 @@ namespace Sharpmake.Generators.VisualStudio
                 case Project.Configuration.OutputType.Exe:
                 case Project.Configuration.OutputType.DotNetConsoleApp:
                 case Project.Configuration.OutputType.DotNetWindowsApp:
+                case Project.Configuration.OutputType.IosApp:
+                case Project.Configuration.OutputType.IosTestBundle:
                     context.Options["OutputFile"] = optionsContext.OutputDirectoryRelative + Util.WindowsSeparator + outputFileName + outputExtension;
                     if (context.Configuration.Output == Project.Configuration.OutputType.Dll)
                     {
@@ -1698,6 +1679,9 @@ namespace Sharpmake.Generators.VisualStudio
 
         private void GenerateManifestToolOptions(IGenerationContext context, ProjectOptionsGenerationContext optionsContext)
         {
+            if (!context.DevelopmentEnvironment.IsVisualStudio()) // TODO: ideally this option generator should be split between VS / non-VS
+                return;
+
             Strings manifestInputs = new Strings();
 
             string vsManifestFilesPath = Util.SimplifyPath(Path.Combine(context.DevelopmentEnvironment.GetVisualStudioVCRootPath(), "Include", "Manifest"));
@@ -2188,7 +2172,7 @@ namespace Sharpmake.Generators.VisualStudio
             {
                 context.Options["GenerateMapFile"] = "true";
                 string targetNamePrefix = optionsContext.PlatformVcxproj.GetOutputFileNamePrefix(context, context.Configuration.Output);
-                string mapFile = optionsContext.OutputDirectoryRelative + Util.WindowsSeparator + targetNamePrefix + optionsContext.TargetName + ".map";
+                string mapFile = Path.Combine(optionsContext.OutputDirectoryRelative, targetNamePrefix + optionsContext.TargetName + ".map");
                 context.Options["MapFileName"] = mapFile;
 
                 string mapFileBffRelative = FormatCommandLineOptionPath(context, mapFile);

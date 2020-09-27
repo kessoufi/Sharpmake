@@ -197,7 +197,6 @@ namespace Sharpmake
 
             public class ApplicationVersion : StringOption
             {
-                public static readonly string Default = "1.0.0.%2a";
                 public ApplicationVersion(string version) : base(version) { }
             }
 
@@ -330,6 +329,11 @@ namespace Sharpmake
             public class CopyVsixExtensionLocation : StringOption
             {
                 public CopyVsixExtensionLocation(string location) : base(location) { }
+            }
+
+            public class ProductVersion : StringOption
+            {
+                public ProductVersion(string versionString) : base(versionString) { }
             }
 
             public enum MapFileExtensions

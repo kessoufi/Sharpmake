@@ -1,5 +1,8 @@
 @echo off
 
+:: Clear previous run status
+COLOR
+
 :: set batch file directory as current
 pushd "%~dp0"
 
@@ -30,7 +33,6 @@ goto end
 :error
 COLOR 4F
 echo Bootstrap failed^!
-pause
 set ERROR_CODE=1
 goto end
 
